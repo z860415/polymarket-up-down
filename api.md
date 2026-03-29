@@ -51,6 +51,10 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - 可選：`auto`、`safe`、`proxy`
   - 預設：`auto`
   - 說明：自動領取提交策略；`auto` 會依 signer 推導出的 safe / proxy wallet 與 `claim_account` 自動判斷
+- claim 提交認證順序固定為：
+  - 先使用 `RELAYER_API_KEY` + `RELAYER_API_KEY_ADDRESS`
+  - 若 relayer API key 缺失，才退回 `POLY_BUILDER_API_*`
+  - 若兩者都缺失，preflight / submit 必須直接失敗
 
 ### Live 訂單終態兼容
 

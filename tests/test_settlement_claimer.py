@@ -235,6 +235,66 @@ def test_scan_and_claim_dry_run_only_fetches_positions(
     assert all("/submit" not in call for call in calls)
 
 
+def test_build_auth_headers_prefers_relayer_api_key_over_builder(
+    tmp_path: Path,
+    configured_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """當 relayer API key 與 Builder 憑證同時存在時，應優先使用 relayer header。"""
+
+    class _BuilderShouldNotBeCalled:
+        """若此物件被呼叫，代表認證優先順序錯誤。"""
+
+        def generate_builder_headers(self, *_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("雙憑證情境不應退回 Builder 認證")
+
+    monkeypatch.setenv("POLY_BUILDER_API_KEY", "builder-key")
+    monkeypatch.setenv("POLY_BUILDER_API_SECRET", "builder-secret")
+    monkeypatch.setenv("POLY_BUILDER_API_PASSPHRASE", "builder-passphrase")
+
+    claimer = SettlementClaimer(db_path=str(tmp_path / "claims.db"))
+    claimer._builder_config = _BuilderShouldNotBeCalled()
+
+    headers = claimer._build_auth_headers("POST", "/submit", {"type": "PROXY"})
+
+    assert headers == {
+        "RELAYER_API_KEY": "relayer-key",
+        "RELAYER_API_KEY_ADDRESS": claimer._relayer_api_key_address,
+    }
+
+
+def test_build_auth_headers_falls_back_to_builder_when_relayer_key_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """當 relayer API key 缺失時，應退回 Builder 認證標頭。"""
+
+    class _DummyBuilderHeaders:
+        """模擬 Builder header 物件。"""
+
+        def to_dict(self) -> Dict[str, str]:
+            return {"POLY_BUILDER_API_KEY": "builder-key"}
+
+    class _DummyBuilderConfig:
+        """模擬 Builder 簽名器。"""
+
+        def generate_builder_headers(self, *_args: Any, **_kwargs: Any) -> _DummyBuilderHeaders:
+            return _DummyBuilderHeaders()
+
+    monkeypatch.delenv("RELAYER_API_KEY", raising=False)
+    monkeypatch.delenv("RELAYER_API_KEY_ADDRESS", raising=False)
+    monkeypatch.setenv("POLY_BUILDER_API_KEY", "builder-key")
+    monkeypatch.setenv("POLY_BUILDER_API_SECRET", "builder-secret")
+    monkeypatch.setenv("POLY_BUILDER_API_PASSPHRASE", "builder-passphrase")
+
+    claimer = SettlementClaimer(db_path=str(tmp_path / "claims.db"))
+    claimer._builder_config = _DummyBuilderConfig()
+
+    headers = claimer._build_auth_headers("POST", "/submit", {"type": "SAFE"})
+
+    assert headers == {"POLY_BUILDER_API_KEY": "builder-key"}
+
+
 def test_submit_claim_uses_proxy_path_when_claim_account_matches_proxy_wallet(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

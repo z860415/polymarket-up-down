@@ -321,6 +321,7 @@
 - v1 只支援 Polygon 主網與官方 relayer
 - v1 只支援 binary market 的 `indexSets=[1,2]` 領取策略
 - 必須提供 `claim dry run` 模式，只掃描可領取倉位、不提交 relayer 交易
+- 當 `.env` 同時存在 `RELAYER_API_KEY / RELAYER_API_KEY_ADDRESS` 與 Builder 憑證時，claim 提交必須優先使用 relayer API key header；只有 relayer API key 缺失時才允許退回 Builder 簽名標頭
 - 當領取地址等於 signer 推導出的 proxy wallet 時，必須改走官方 `PROXY` relayer 路徑，不得誤用 `SAFE`
 - 當領取地址等於 signer 推導出的 safe 或明確指定 `safe` 模式時，沿用既有 `SAFE` 路徑
 - 提交前必須驗證 `claim_account` 與 signer 推導出的 proxy / safe 地址是否一致，避免替錯帳戶領取

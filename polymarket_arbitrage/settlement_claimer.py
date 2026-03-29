@@ -242,8 +242,10 @@ class SettlementClaimer:
 
     def _has_auth_credentials(self) -> bool:
         """判斷是否至少配置一種 relayer 認證。"""
-        if self._builder_config is not None:
-            return True
+        return self._has_relayer_api_credentials() or self._builder_config is not None
+
+    def _has_relayer_api_credentials(self) -> bool:
+        """判斷是否已配置 relayer API key 認證。"""
         return bool(self._relayer_api_key and self._relayer_api_key_address)
 
     def _request_json(
@@ -271,18 +273,19 @@ class SettlementClaimer:
 
     def _build_auth_headers(self, method: str, path: str, payload: Optional[Dict[str, Any]]) -> Dict[str, str]:
         """建立 relayer 認證標頭。"""
+        if self._has_relayer_api_credentials():
+            # relayer API key 是 claim submit 的首選認證，避免 Builder 憑證存在時覆蓋使用者顯式提供的 relayer key。
+            return {
+                "RELAYER_API_KEY": self._relayer_api_key,
+                "RELAYER_API_KEY_ADDRESS": self._relayer_api_key_address,
+            }
+
         if self._builder_config is not None:
             body = str(payload) if payload is not None else None
             header_payload = self._builder_config.generate_builder_headers(method, path, body)
             if header_payload is None:
                 raise SettlementClaimError("Builder 憑證簽名失敗")
             return header_payload.to_dict()
-
-        if self._relayer_api_key and self._relayer_api_key_address:
-            return {
-                "RELAYER_API_KEY": self._relayer_api_key,
-                "RELAYER_API_KEY_ADDRESS": self._relayer_api_key_address,
-            }
 
         raise SettlementClaimError("未配置可用的 relayer 認證")
 

@@ -8,6 +8,8 @@
 
 ## 已完成
 
+- [x] T124 本輪：將 claim relayer 認證改為 `RELAYER_API_KEY*` 優先、Builder fallback，補齊文件與測試，並在真實 submit 驗證已切到 relayer header；服務端仍回 `401 Unauthorized`
+- [x] T123 本輪：嘗試對當前 redeemable positions 正式執行 claim submission；preflight 通過，但實際提交被 relayer `401 Unauthorized` 阻塞
 - [x] T122 本輪：修復 `window_not_open` 前置拒絕與 `prefiltered_rejects` 樣本遺失，並明確收斂 live 預設不納入 `1m`
 - [x] T121 本輪：建立 git 提交並推送到 `git@github.com:z860415/polymarket-up-down.git`，確認只包含 `.env.example` 不包含 `.env`
 - [x] T120 本輪：重啟 live 常駐程序，使放寬後的 `15m / 4h` 研究門檻正式生效
