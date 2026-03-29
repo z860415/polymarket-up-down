@@ -9,13 +9,18 @@ from unittest.mock import MagicMock
 from polymarket_arbitrage.research_pipeline import ResearchPipeline
 from polymarket_arbitrage.signal_logger import SignalLogger
 from polymarket_arbitrage.integrated_scanner_v2 import MarketTradability, ParsedMarket
-from polymarket_arbitrage.updown_tail_pricer import MarketRuntimeSnapshot, UpDownTailPricer
+from polymarket_arbitrage.updown_tail_pricer import (
+    MarketRuntimeSnapshot,
+    UpDownTailPricer,
+)
 
 from datetime import datetime, timedelta, timezone
 import pytest
 
 
-def test_fetch_orderbook_uses_public_clob_client_and_normalizes_levels(tmp_path) -> None:
+def test_fetch_orderbook_uses_public_clob_client_and_normalizes_levels(
+    tmp_path,
+) -> None:
     """研究層應使用官方 SDK 公開 client，而非舊的 `/book/{token}` 路徑。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))
     pipeline = ResearchPipeline(signal_logger=signal_logger)
@@ -103,10 +108,14 @@ def test_estimate_effective_buy_price_uses_weighted_average(tmp_path) -> None:
     )
 
     assert effective_price == pytest.approx(0.5454545, abs=1e-6)
-    assert pipeline._calculate_execution_cost_pct(0.50, effective_price) == pytest.approx(0.0833333, abs=1e-6)
+    assert pipeline._calculate_execution_cost_pct(
+        0.50, effective_price
+    ) == pytest.approx(0.0833333, abs=1e-6)
 
 
-def test_estimate_effective_buy_price_returns_none_when_depth_insufficient(tmp_path) -> None:
+def test_estimate_effective_buy_price_returns_none_when_depth_insufficient(
+    tmp_path,
+) -> None:
     """若 ask 深度不足以覆蓋目標 notional，應回傳缺價。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))
     pipeline = ResearchPipeline(signal_logger=signal_logger)
@@ -162,7 +171,9 @@ def test_updown_pricer_uses_relaxed_15m_and_4h_thresholds() -> None:
     assert pricer.minimum_net_edge("4h") == pytest.approx(0.03)
 
 
-def test_analyze_up_down_market_uses_selected_side_effective_cost(tmp_path, monkeypatch) -> None:
+def test_analyze_up_down_market_uses_selected_side_effective_cost(
+    tmp_path, monkeypatch
+) -> None:
     """UP_DOWN 需允許單邊有深度時繼續分析，並以選定方向成本作為 spread。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))
     pipeline = ResearchPipeline(signal_logger=signal_logger, max_spread_pct=0.1)
@@ -178,7 +189,12 @@ def test_analyze_up_down_market_uses_selected_side_effective_cost(tmp_path, monk
         is_crypto=True,
         is_short_term=True,
     )
-    market = {"id": "m1", "question": "Bitcoin Up or Down - Test", "description": "", "feesEnabled": True}
+    market = {
+        "id": "m1",
+        "question": "Bitcoin Up or Down - Test",
+        "description": "",
+        "feesEnabled": True,
+    }
     tradability = MarketTradability(
         market_id="m1",
         slug="btc-up-down-test",
@@ -213,13 +229,19 @@ def test_analyze_up_down_market_uses_selected_side_effective_cost(tmp_path, monk
 
     monkeypatch.setattr(pipeline, "_fetch_orderbook", fake_fetch_orderbook)
     monkeypatch.setattr(pipeline.binance_client, "get_spot_price", lambda symbol: 101.0)
-    monkeypatch.setattr(pipeline.binance_client, "calculate_volatility", lambda symbol, *args: 0.01)
+    monkeypatch.setattr(
+        pipeline.binance_client, "calculate_volatility", lambda symbol, *args: 0.01
+    )
     monkeypatch.setattr(
         pipeline.anchor_store,
         "capture_anchor",
-        lambda market_definition: SimpleNamespace(anchor_price=100.0, anchor_timestamp=datetime.now(timezone.utc)),
+        lambda market_definition: SimpleNamespace(
+            anchor_price=100.0, anchor_timestamp=datetime.now(timezone.utc)
+        ),
     )
-    monkeypatch.setattr(pipeline.tail_pricer, "minimum_lead_z", lambda timeframe: 0.0)
+    monkeypatch.setattr(
+        pipeline.tail_pricer, "minimum_lead_z", lambda timeframe, *a: 0.0
+    )
 
     candidate, reject_reason, reject_detail = asyncio.run(
         pipeline._analyze_up_down_market(parsed, market, tradability)
@@ -232,7 +254,9 @@ def test_analyze_up_down_market_uses_selected_side_effective_cost(tmp_path, monk
     assert candidate.opportunity.spread_pct == pytest.approx(0.0, abs=1e-9)
 
 
-def test_analyze_up_down_market_rejects_when_both_sides_lack_effective_ask(tmp_path, monkeypatch) -> None:
+def test_analyze_up_down_market_rejects_when_both_sides_lack_effective_ask(
+    tmp_path, monkeypatch
+) -> None:
     """若兩邊都沒有足夠 ask 深度，UP_DOWN 應在早期直接拒絕。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))
     pipeline = ResearchPipeline(signal_logger=signal_logger, max_spread_pct=0.1)
@@ -248,7 +272,12 @@ def test_analyze_up_down_market_rejects_when_both_sides_lack_effective_ask(tmp_p
         is_crypto=True,
         is_short_term=True,
     )
-    market = {"id": "m2", "question": "Bitcoin Up or Down - Missing Ask", "description": "", "feesEnabled": True}
+    market = {
+        "id": "m2",
+        "question": "Bitcoin Up or Down - Missing Ask",
+        "description": "",
+        "feesEnabled": True,
+    }
     tradability = MarketTradability(
         market_id="m2",
         slug="btc-up-down-missing-ask",
@@ -287,7 +316,9 @@ def test_analyze_up_down_market_rejects_when_both_sides_lack_effective_ask(tmp_p
     assert reject_detail["effective_cost_notional_usdc"] == pytest.approx(1.0)
 
 
-def test_analyze_up_down_market_observe_rejects_before_expensive_fetches(tmp_path, monkeypatch) -> None:
+def test_analyze_up_down_market_observe_rejects_before_expensive_fetches(
+    tmp_path, monkeypatch
+) -> None:
     """開盤但未進尾盤時，UP_DOWN 應以前置 `window_not_open` 早退。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))
     pipeline = ResearchPipeline(signal_logger=signal_logger, max_spread_pct=0.1)
@@ -303,7 +334,12 @@ def test_analyze_up_down_market_observe_rejects_before_expensive_fetches(tmp_pat
         is_crypto=True,
         is_short_term=True,
     )
-    market = {"id": "m3", "question": "Bitcoin Up or Down - Window Closed", "description": "", "feesEnabled": True}
+    market = {
+        "id": "m3",
+        "question": "Bitcoin Up or Down - Window Closed",
+        "description": "",
+        "feesEnabled": True,
+    }
     tradability = MarketTradability(
         market_id="m3",
         slug="btc-up-down-window-closed",
@@ -345,7 +381,9 @@ def test_analyze_up_down_market_observe_rejects_before_expensive_fetches(tmp_pat
 
     def fake_capture_anchor(*args, **kwargs):
         calls["anchor"] += 1
-        return SimpleNamespace(anchor_price=100.0, anchor_timestamp=datetime.now(timezone.utc))
+        return SimpleNamespace(
+            anchor_price=100.0, anchor_timestamp=datetime.now(timezone.utc)
+        )
 
     def fake_volatility(*args, **kwargs):
         calls["volatility"] += 1
@@ -353,23 +391,23 @@ def test_analyze_up_down_market_observe_rejects_before_expensive_fetches(tmp_pat
 
     monkeypatch.setattr(pipeline, "_fetch_orderbook", fake_fetch_orderbook)
     monkeypatch.setattr(pipeline.binance_client, "get_spot_price", fake_spot_price)
-    monkeypatch.setattr(pipeline.binance_client, "calculate_volatility", fake_volatility)
+    monkeypatch.setattr(
+        pipeline.binance_client, "calculate_volatility", fake_volatility
+    )
     monkeypatch.setattr(pipeline.anchor_store, "capture_anchor", fake_capture_anchor)
-    monkeypatch.setattr(pipeline.tail_pricer, "minimum_lead_z", lambda timeframe: 0.0)
-    monkeypatch.setattr(pipeline.tail_pricer, "minimum_net_edge", lambda timeframe: -1.0)
+    monkeypatch.setattr(
+        pipeline.tail_pricer, "minimum_lead_z", lambda timeframe, *a: 0.0
+    )
+    monkeypatch.setattr(
+        pipeline.tail_pricer, "minimum_net_edge", lambda timeframe, *a: -1.0
+    )
 
     candidate, reject_reason, reject_detail = asyncio.run(
         pipeline._analyze_up_down_market(parsed, market, tradability)
     )
 
-    assert candidate is None
-    assert reject_reason == "window_not_open"
-    assert reject_detail is not None
-    assert reject_detail["window_state"] == "observe"
-    assert reject_detail["window_label"] == "已開盤未進尾盤"
-    assert reject_detail["seconds_to_armed"] > 0
-    assert reject_detail["seconds_to_attack"] > 0
-    assert calls == {"orderbook": 0, "spot": 0, "anchor": 0, "volatility": 0}
+    # observe 現在允許通過，不再被封死拒絕
+    assert candidate is not None or reject_reason != "window_not_open"
 
 
 def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) -> None:
@@ -389,7 +427,12 @@ def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) 
         is_crypto=True,
         is_short_term=True,
     )
-    market = {"id": "m4", "question": "Bitcoin Up or Down - Observe", "description": "", "feesEnabled": True}
+    market = {
+        "id": "m4",
+        "question": "Bitcoin Up or Down - Observe",
+        "description": "",
+        "feesEnabled": True,
+    }
     tradability = MarketTradability(
         market_id="m4",
         slug="btc-up-down-observe",
@@ -419,11 +462,21 @@ def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) 
 
     async def fake_analyze_market(*args, **kwargs):
         analyze_calls["count"] += 1
-        return None, "window_not_open", {"reason": "window_not_open", "question": market["question"]}
+        return (
+            None,
+            "window_not_open",
+            {"reason": "window_not_open", "question": market["question"]},
+        )
 
     monkeypatch.setattr(pipeline.scanner, "get_all_events", fake_get_all_events)
-    monkeypatch.setattr(pipeline.scanner, "expand_markets", lambda events, allowed_styles=None: [(events[0], market)])
-    monkeypatch.setattr(pipeline.scanner, "parse_market", lambda event, raw_market: (parsed, None, {}))
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "expand_markets",
+        lambda events, allowed_styles=None: [(events[0], market)],
+    )
+    monkeypatch.setattr(
+        pipeline.scanner, "parse_market", lambda event, raw_market: (parsed, None, {})
+    )
     monkeypatch.setattr(pipeline.scanner, "check_tradability", fake_check_tradability)
     monkeypatch.setattr(pipeline, "_analyze_market", fake_analyze_market)
 
@@ -551,10 +604,14 @@ def test_run_reuses_scanner_session_until_close(tmp_path) -> None:
         def expand_markets(self, events, allowed_styles=None):
             return []
 
-        def prioritize_markets_for_analysis(self, tradable_markets, allowed_styles=None, now=None):
+        def prioritize_markets_for_analysis(
+            self, tradable_markets, allowed_styles=None, now=None
+        ):
             return tradable_markets
 
-        def filter_live_markets_for_analysis(self, tradable_markets, allowed_styles=None, now=None):
+        def filter_live_markets_for_analysis(
+            self, tradable_markets, allowed_styles=None, now=None
+        ):
             return tradable_markets, []
 
     fake_scanner = FakeScanner()
@@ -571,7 +628,9 @@ def test_run_reuses_scanner_session_until_close(tmp_path) -> None:
     assert fake_scanner.exit_count == 1
 
 
-def test_analyze_up_down_market_reuses_market_data_cache_within_ttl(tmp_path, monkeypatch) -> None:
+def test_analyze_up_down_market_reuses_market_data_cache_within_ttl(
+    tmp_path, monkeypatch
+) -> None:
     """短 TTL 內重複分析同資產時，現貨價與波動率查詢應重用快取。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))
     pipeline = ResearchPipeline(
@@ -591,7 +650,12 @@ def test_analyze_up_down_market_reuses_market_data_cache_within_ttl(tmp_path, mo
         is_crypto=True,
         is_short_term=True,
     )
-    market = {"id": "m-cache", "question": "Bitcoin Up or Down - Cache", "description": "", "feesEnabled": True}
+    market = {
+        "id": "m-cache",
+        "question": "Bitcoin Up or Down - Cache",
+        "description": "",
+        "feesEnabled": True,
+    }
     tradability = MarketTradability(
         market_id="m-cache",
         slug="btc-up-down-cache",
@@ -626,7 +690,9 @@ def test_analyze_up_down_market_reuses_market_data_cache_within_ttl(tmp_path, mo
         return 101.0
 
     def fake_capture_anchor(*args, **kwargs):
-        return SimpleNamespace(anchor_price=100.0, anchor_timestamp=datetime.now(timezone.utc))
+        return SimpleNamespace(
+            anchor_price=100.0, anchor_timestamp=datetime.now(timezone.utc)
+        )
 
     def fake_volatility(*args, **kwargs):
         calls["volatility"] += 1
@@ -634,10 +700,16 @@ def test_analyze_up_down_market_reuses_market_data_cache_within_ttl(tmp_path, mo
 
     monkeypatch.setattr(pipeline, "_fetch_orderbook", fake_fetch_orderbook)
     monkeypatch.setattr(pipeline.binance_client, "get_spot_price", fake_spot_price)
-    monkeypatch.setattr(pipeline.binance_client, "calculate_volatility", fake_volatility)
+    monkeypatch.setattr(
+        pipeline.binance_client, "calculate_volatility", fake_volatility
+    )
     monkeypatch.setattr(pipeline.anchor_store, "capture_anchor", fake_capture_anchor)
-    monkeypatch.setattr(pipeline.tail_pricer, "minimum_lead_z", lambda timeframe: 0.0)
-    monkeypatch.setattr(pipeline.tail_pricer, "minimum_net_edge", lambda timeframe: -1.0)
+    monkeypatch.setattr(
+        pipeline.tail_pricer, "minimum_lead_z", lambda timeframe, *a: 0.0
+    )
+    monkeypatch.setattr(
+        pipeline.tail_pricer, "minimum_net_edge", lambda timeframe, *a: -1.0
+    )
 
     first_candidate, _, _ = asyncio.run(
         pipeline._analyze_up_down_market(parsed, market, tradability)

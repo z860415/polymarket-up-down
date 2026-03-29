@@ -70,6 +70,39 @@ TIMEFRAME_POSITION_BUCKET = {
     "1d": 0.0150,
 }
 
+# ---------------------------------------------------------------------------
+# Observe 階段（盤口定價套利）：門檻比尾盤低，只用 maker 掛單
+# ---------------------------------------------------------------------------
+OBSERVE_MIN_NET_EDGE = {
+    "1m": 0.04,
+    "5m": 0.03,
+    "15m": 0.02,
+    "1h": 0.02,
+    "4h": 0.02,
+    "12h": 0.02,
+    "1d": 0.02,
+}
+
+OBSERVE_MIN_LEAD_Z = {
+    "1m": 0.8,
+    "5m": 0.5,
+    "15m": 0.3,
+    "1h": 0.3,
+    "4h": 0.3,
+    "12h": 0.3,
+    "1d": 0.3,
+}
+
+OBSERVE_POSITION_BUCKET = {
+    "1m": 0.005,
+    "5m": 0.005,
+    "15m": 0.0075,
+    "1h": 0.01,
+    "4h": 0.01,
+    "12h": 0.01,
+    "1d": 0.01,
+}
+
 
 @dataclass(frozen=True)
 class MarketRuntimeSnapshot:
@@ -195,17 +228,31 @@ class UpDownTailPricer:
             confidence_score=confidence_score,
         )
 
-    def minimum_net_edge(self, timeframe: str) -> float:
+    def minimum_net_edge(self, timeframe: str, window_state: str = "armed") -> float:
         """取得各週期最低淨 edge。"""
+        if window_state == "observe":
+            return OBSERVE_MIN_NET_EDGE.get(timeframe, 0.03)
         return MIN_NET_EDGE.get(timeframe, 0.05)
 
-    def minimum_lead_z(self, timeframe: str) -> float:
+    def minimum_lead_z(self, timeframe: str, window_state: str = "armed") -> float:
         """取得各週期最低 lead_z。"""
+        if window_state == "observe":
+            return OBSERVE_MIN_LEAD_Z.get(timeframe, 0.5)
         return MIN_LEAD_Z.get(timeframe, 2.0)
 
-    def position_bucket(self, timeframe: str) -> float:
+    def position_bucket(self, timeframe: str, window_state: str = "armed") -> float:
         """取得各週期最大倉位比例。"""
+        if window_state == "observe":
+            return OBSERVE_POSITION_BUCKET.get(timeframe, 0.005)
         return TIMEFRAME_POSITION_BUCKET.get(timeframe, 0.01)
+
+    def is_observe_eligible(
+        self, timeframe: str, lead_z: float, net_edge: float
+    ) -> bool:
+        """判斷 observe 階段的市場是否達到掛單門檻。"""
+        min_edge = self.minimum_net_edge(timeframe, "observe")
+        min_z = self.minimum_lead_z(timeframe, "observe")
+        return net_edge >= min_edge and abs(lead_z) >= min_z
 
     def _estimate_fee_cost(self, snapshot: MarketRuntimeSnapshot) -> float:
         """估算成本中的手續費部分。"""

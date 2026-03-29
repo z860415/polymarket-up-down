@@ -673,26 +673,14 @@ class ResearchPipeline:
         window_state = self.tail_pricer.resolve_window_state(
             parsed.timeframe, tau_seconds
         ).value
-        if window_state not in {"armed", "attack"}:
-            window_config = TAIL_WINDOWS.get(parsed.timeframe, {})
-            armed_seconds = float(window_config.get("armed", 0))
-            attack_seconds = float(window_config.get("attack", 0))
+        if window_state not in {"armed", "attack", "observe"}:
             return self._build_reject(
                 "window_not_open",
                 parsed,
                 market,
                 detail={
                     "window_state": window_state,
-                    "window_label": "已開盤未進尾盤"
-                    if window_state == "observe"
-                    else window_state,
                     "tau_seconds": round(tau_seconds, 1),
-                    "seconds_to_armed": round(
-                        max(tau_seconds - armed_seconds, 0.0), 1
-                    ),
-                    "seconds_to_attack": round(
-                        max(tau_seconds - attack_seconds, 0.0), 1
-                    ),
                 },
             )
         if tradability.volume < self.min_market_volume:
@@ -846,7 +834,7 @@ class ResearchPipeline:
                 },
             )
         if abs(tail_estimate.lead_z) < self.tail_pricer.minimum_lead_z(
-            parsed.timeframe
+            parsed.timeframe, window_state
         ):
             return self._build_reject(
                 "lead_z_too_low",
@@ -854,11 +842,14 @@ class ResearchPipeline:
                 market,
                 detail={
                     "lead_z": tail_estimate.lead_z,
-                    "minimum_lead_z": self.tail_pricer.minimum_lead_z(parsed.timeframe),
+                    "minimum_lead_z": self.tail_pricer.minimum_lead_z(
+                        parsed.timeframe, window_state
+                    ),
+                    "window_state": window_state,
                 },
             )
         if tail_estimate.selected_net_edge < self.tail_pricer.minimum_net_edge(
-            parsed.timeframe
+            parsed.timeframe, window_state
         ):
             return self._build_reject(
                 "edge_too_low",
@@ -867,8 +858,9 @@ class ResearchPipeline:
                 detail={
                     "selected_edge": tail_estimate.selected_net_edge,
                     "min_edge_threshold": self.tail_pricer.minimum_net_edge(
-                        parsed.timeframe
+                        parsed.timeframe, window_state
                     ),
+                    "window_state": window_state,
                 },
             )
         if tail_estimate.confidence_score < self.min_confidence_score:

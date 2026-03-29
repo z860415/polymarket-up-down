@@ -1265,8 +1265,9 @@ class LiveExecutor:
             raise ExecutionError("Tail candidate missing runtime snapshot or estimate")
 
         timeframe = opportunity.timeframe or ""
-        min_edge = self._tail_pricer.minimum_net_edge(timeframe)
-        min_lead_z = self._tail_pricer.minimum_lead_z(timeframe)
+        ws = snapshot.window_state
+        min_edge = self._tail_pricer.minimum_net_edge(timeframe, ws)
+        min_lead_z = self._tail_pricer.minimum_lead_z(timeframe, ws)
         if estimate.selected_net_edge < min_edge:
             return self._reject_tail_candidate(
                 candidate,
@@ -1276,20 +1277,20 @@ class LiveExecutor:
             return self._reject_tail_candidate(
                 candidate, f"lead_z 不足: {estimate.lead_z:.4f} < {min_lead_z:.4f}"
             )
-        if snapshot.window_state not in {"armed", "attack"}:
-            return self._reject_tail_candidate(
-                candidate, f"尾盤狀態不允許下單: {snapshot.window_state}"
-            )
+        if ws not in {"armed", "attack", "observe"}:
+            return self._reject_tail_candidate(candidate, f"狀態不允許下單: {ws}")
 
-        exposure_key = f"{opportunity.asset}:{estimate.selected_side}"
+        # observe 使用不同的 exposure key 前綴，方便後續管理
+        exposure_prefix = "obs" if ws == "observe" else "tail"
+        exposure_key = f"{exposure_prefix}:{opportunity.asset}:{estimate.selected_side}"
         if exposure_key in self._directional_exposure_keys:
             return self._reject_tail_candidate(
-                candidate, f"同資產同方向已有尾盤攻擊倉位: {exposure_key}"
+                candidate, f"同資產同方向已有倉位: {exposure_key}"
             )
 
         account = self.get_account_state()
         bucket_amount = account.usdc_balance * self._tail_pricer.position_bucket(
-            timeframe
+            timeframe, ws
         )
         reference_ask = (
             opportunity.yes_ask
@@ -1378,6 +1379,10 @@ class LiveExecutor:
             taker_price = (
                 refreshed_ask if refreshed_ask is not None else opportunity.no_ask
             ) or 0.0
+
+        # observe 階段：永遠只用 maker（bid 側掛單），絕不吃單
+        if snapshot.window_state == "observe":
+            return maker_price
 
         timeframe = opportunity.timeframe or ""
         if timeframe in {"5m", "15m"}:
@@ -1528,14 +1533,16 @@ class LiveExecutor:
                 result.filled_size = self._extract_remote_filled_size(order_info)
 
             elif status_str == "CANCELLED":
-                result = self._mark_order_terminal(
-                    order_id, LiveExecutionStatus.CANCELLED
-                ) or result
+                result = (
+                    self._mark_order_terminal(order_id, LiveExecutionStatus.CANCELLED)
+                    or result
+                )
 
             elif status_str == "EXPIRED":
-                result = self._mark_order_terminal(
-                    order_id, LiveExecutionStatus.EXPIRED
-                ) or result
+                result = (
+                    self._mark_order_terminal(order_id, LiveExecutionStatus.EXPIRED)
+                    or result
+                )
 
             elif self._is_order_timed_out(result):
                 cancelled = self.cancel_order(order_id)
