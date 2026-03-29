@@ -375,6 +375,9 @@ class ResearchPipeline:
         )
         for reject_detail in prefiltered_rejects:
             reject_reason = reject_detail["reason"]
+            # 跳過已過期和尚未開盤的市場記錄，只記錄真正有分析價值的拒絕
+            if reject_reason in ("market_expired", "market_not_open_yet"):
+                continue
             reject_summary[reject_reason] = reject_summary.get(reject_reason, 0) + 1
             if len(reject_samples) < 20:
                 reject_samples.append(reject_detail)

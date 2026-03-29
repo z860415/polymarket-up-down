@@ -550,24 +550,7 @@ class PolymarketScannerV2:
 
             market_start_timestamp = self._estimate_market_start_timestamp(parsed)
             if market_start_timestamp is not None and market_start_timestamp > current_time:
-                filtered_out.append(
-                    {
-                        "reason": "market_not_open_yet",
-                        "market_id": tradability.market_id,
-                        "question": market.get("question", ""),
-                        "asset": parsed.asset,
-                        "style": parsed.style,
-                        "timeframe": parsed.timeframe,
-                        "window_state": "not_open",
-                        "tau_seconds": max(
-                            (parsed.expiry - current_time).total_seconds(), 0.0
-                        ),
-                        "market_start_timestamp": market_start_timestamp.isoformat(),
-                        "seconds_to_open": (
-                            market_start_timestamp - current_time
-                        ).total_seconds(),
-                    }
-                )
+                # 尚未開盤的市場直接跳過，不記錄到 filtered_out
                 continue
 
             tau_seconds = max((parsed.expiry - current_time).total_seconds(), 0.0)
@@ -575,18 +558,8 @@ class PolymarketScannerV2:
                 live_candidates.append((parsed, market, tradability))
                 continue
 
-            filtered_out.append(
-                {
-                    "reason": "market_expired",
-                    "market_id": tradability.market_id,
-                    "question": market.get("question", ""),
-                    "asset": parsed.asset,
-                    "style": parsed.style,
-                    "timeframe": parsed.timeframe,
-                    "window_state": "expired",
-                    "tau_seconds": tau_seconds,
-                }
-            )
+            # 已過期的市場直接跳過，不記錄到 filtered_out
+            continue
 
         return live_candidates, filtered_out
 
