@@ -1,0 +1,124 @@
+# Todolist
+
+## 進行中
+
+- [ ] T121 本輪：建立 git 提交並推送到 `git@github.com:z860415/polymarket-up-down.git`，確認只包含 `.env.example` 不包含 `.env`
+- [ ] T38 本輪：執行保成交優先的 crypto micro order smoke，驗證 FILLED 終態與成交回寫（目前受交易所 `$1` 最小 marketable BUY 限制阻塞）
+- [ ] T22 下一輪：補齊更完整的 CI / dev setup，避免依賴漂移與本機 Python 版本差異
+- [ ] T45 下一輪：補齊非 Binance 現貨資產的價格來源 / 白名單收斂，避免 `MEGA` 類市場反覆進入研究噪音
+
+## 已完成
+
+- [x] T120 本輪：重啟 live 常駐程序，使放寬後的 `15m / 4h` 研究門檻正式生效
+- [x] T119 本輪：放寬 `15m / 4h` 研究門檻並重跑 targeted pytest，驗證 research reject 分布符合新基線
+- [x] T116 本輪：重啟 live / monitor 程序並清空 `logs/` 歷史日誌，確認 Web 監控只顯示新進程輸出
+- [x] T115 本輪：補齊 `run_auto_trading` / `auto_trading` / `research_pipeline` 測試並重跑相關 pytest，驗證剩餘流程修正全綠
+- [x] T114 本輪：為研究層加入短 TTL 的現貨價 / 波動率快取，降低 observe 市場重複 HTTP 成本
+- [x] T113 本輪：重構 `ResearchPipeline` scanner session 生命週期，避免每輪重建 `aiohttp.ClientSession`
+- [x] T112 本輪：在 `AutoTradingPipeline.run_cycle()` 補上送單後短延遲即時輪詢，避免新單一定要等到下一輪才更新狀態
+- [x] T111 本輪：將 live CLI 與主迴圈的 `scan_interval` 預設收斂為 `10` 秒，避免回退到 `60` 秒配置
+- [x] T110 本輪：更新 `spec.md` / `api.md` / `todolist.md`，定義剩餘流程修正範圍（10 秒預設輪詢、送單後即時輪詢、scanner session 常駐、研究層行情快取）
+- [x] T109 本輪：修正 `test_should_execute_yes_side` 舊期待值，對齊 `should_execute()` 目前已扣除手續費的 edge 邏輯
+- [x] T107 本輪：補齊 pending timeout 測試並重跑相關 pytest，驗證取消後會釋放本地狀態
+- [x] T106 本輪：為 pending order 輪詢補上超時取消機制，避免 directional exposure 長期卡死
+- [x] T108 本輪：更新 `spec.md` / `api.md` / `todolist.md`，定義 pending order 超時取消契約
+- [x] T105 本輪：補齊 `market_not_open_yet` 與送單前刷新 order book 測試，完成 targeted pytest 驗證；廣義回歸另發現既有 `test_should_execute_yes_side` 舊失敗
+- [x] T104 本輪：在尾盤執行層送單前刷新最新 order book，避免沿用研究時刻的舊 `bid / ask`
+- [x] T103 本輪：在 scanner / research 前置過濾新增 `market_not_open_yet`，把尚未開盤市場與 `anchor_unavailable` 明確分流
+- [x] T102 本輪：更新 `spec.md` / `api.md` / `todolist.md`，定義未開盤市場前置分流與送單前盤口刷新契約
+- [x] T101 本輪：更新研究層測試並重跑 pytest，驗證 `observe` 市場可產生 candidate 而非停在 research reject
+- [x] T100 本輪：調整 `UP_DOWN` 研究主線，移除 `observe -> window_not_open` 研究拒絕，保留 `window_state` 供後續風控 / 執行判斷
+- [x] T99 本輪：更新 `spec.md` / `api.md`，將開盤中的 `observe` 市場改為研究成功候選，不再以 `window_not_open` 停在研究拒絕
+- [x] T98 本輪：更新監控頁與相關測試，將 `window_not_open + observe` 明確顯示為「已開盤未進尾盤」
+- [x] T97 本輪：調整 `UP_DOWN` 研究層窗口判定與 reject detail，讓 `observe` 市場完成早期評估後再回 `window_not_open`
+- [x] T96 本輪：更新 `spec.md` / `api.md`，明確 `window_not_open` 需區分為「已開盤未進尾盤」，且 `observe` 市場要進研究評估
+- [x] T95 本輪：更新相關測試並重跑 pytest，驗證 `observe` 市場會進評估且 `window_not_open` 由研究層產出
+- [x] T94 本輪：調整 scanner / research 交界前置過濾，只擋掉已過期市場，讓開盤中的 `observe` 市場進入 `_analyze_market()` 後再以 `window_not_open` 拒絕
+- [x] T93 本輪：更新 `spec.md` / `api.md`，將 `UP_DOWN` 進評估門檻改為市場已開盤且未過期，不再把 `armed / attack` 當成 research 入口 live 條件
+- [x] T92 本輪：補齊 discovery 合併/去重/排除過期測試，重跑 research 驗證近窗市場可重新進入主線
+- [x] T91 本輪：重構 scanner discovery，合併 `/markets` 與 crypto `/events` 候選並排除已過期 `UP_DOWN` 市場
+- [x] T90 本輪：更新 `spec.md` / `api.md`，修正 `UP_DOWN` discovery 需合併近端 crypto events 視窗，避免 `/markets volume` 漏掉近窗市場
+- [x] T89 本輪：補齊監控異常提醒測試，固定 `連續零候選` 與 `缺少觀測資料` 的輸出行為
+- [x] T88 本輪：強化 `monitor_web` 可疑異常提醒，補上優先順序與建議處理動作
+- [x] T87 本輪：更新 `spec.md` / `api.md`，收斂監控頁異常提醒為主動排序的優先處理訊號
+- [x] T86 本輪：補齊 live 窗口前置過濾測試並重跑相關 pytest，確認候選拒絕樣本不再被 `window_not_open` 噪音主導
+- [x] T85 本輪：在 scanner / research 交界新增 `UP_DOWN` live 窗口前置過濾，避免 `observe` 市場占用分析配額
+- [x] T84 本輪：更新 `spec.md` / `api.md`，將 `UP_DOWN` 主研究線收斂為只處理 `armed / attack` live 市場
+- [x] T83 本輪：補齊 `monitor_web` 倒數測試並驗證頁面輸出
+- [x] T82 本輪：修正監控頁前端自動刷新文案，讓 `5 秒` 顯示為即時倒數
+- [x] T81 本輪：更新 `spec.md` / `api.md`，補齊監控頁自動刷新倒數的互動規格
+- [x] T80 本輪：補齊窗口距離排序測試並重跑 research / live，確認是否已進入少量高品質候選或回到真實成本阻塞
+- [x] T79 本輪：調整 scanner / research 的 `UP_DOWN` 候選排序鍵，改為 `time_to_armed asc -> expiry asc -> volume desc`
+- [x] T78 本輪：更新 `spec.md` / `api.md`，將 `UP_DOWN` 本地研究排序收斂為「距離 armed 窗口優先」
+- [x] T77 本輪：補齊拒絕順序 / 近到期重排測試，重跑本地研究與 live 驗證是否仍需調整成本門檻
+- [x] T76 本輪：重構 `UP_DOWN` 研究優先序與 discovery 後本地排序，修正 `anchor_unavailable` 誤判
+- [x] T75 本輪：更新 `spec.md` / `api.md`，明確 `window_not_open` 前移與 `UP_DOWN` 本地近到期重排規格
+- [x] T74 本輪：補齊單邊成本測試並重啟 live，驗證 `candidates=0` 是否下降為少量高品質候選
+- [x] T73 本輪：重構 `UP_DOWN` 研究層 quote / spread 邏輯，將 `ask_quote_missing` 前移並改為選定方向成本判定
+- [x] T72 本輪：更新 `spec.md` / `api.md`，將 `UP_DOWN` spread 判定改為單邊有效成交成本模型
+- [x] T71 本輪：補齊 `/markets` discovery 測試並重啟 live，驗證不再長時間停在 `candidates=0`
+- [x] T70 本輪：調整 scanner / research pipeline，以高流動性可交易 market 為 discovery 入口，排除 `orderbook_disabled` 模板市場
+- [x] T69 本輪：更新 `spec.md` / `api.md`，將 discovery 主來源切換為可交易 `/markets` 優先，`/events` 僅作 fallback
+- [x] T68 本輪：補齊排序 / 解析測試並重啟 live，驗證至少能解析出 crypto `up_down` 候選市場
+- [x] T67 本輪：修正 `up/down` 市場資產與 timeframe 解析，避免被 `Chainlink` 描述與時間窗格式誤判
+- [x] T66 本輪：更新 `spec.md` / `api.md`，將 crypto `up_down` discovery 排序改為 `endDate` 近端優先
+- [x] T65 本輪：補齊前置 style 過濾測試並重啟 live 驗證新拒絕分佈
+- [x] T64 本輪：調整 scanner / research pipeline，讓 `up_down` 只保留前置命中的市場
+- [x] T63 本輪：更新 `spec.md` / `api.md`，將 `up_down` 市場語意過濾前移到 discovery 階段
+- [x] T62 本輪：補齊 `events` 查詢參數測試並重啟 live 驗證 crypto 類別過濾已生效
+- [x] T61 本輪：調整 scanner 的官方 `events` 查詢參數，改用 `tag_slug=crypto&related_tags=true`
+- [x] T60 本輪：更新 `spec.md` / `api.md`，要求官方 `/events` 查詢需帶 crypto 類別過濾
+- [x] T59 本輪：重啟 live 程序並驗證監控頁參數快照已切換為 `up_down`
+- [x] T58 本輪：調整 README 與 systemd 常駐命令，改為 `up_down` 市場
+- [x] T57 本輪：更新 `spec.md` / `api.md`，收斂 live 常駐只跑 `up_down`
+- [x] T56 本輪：新增可疑異常提醒區，提示連續零候選、連續錯誤與觀測停滯
+- [x] T55 本輪：新增參數快照區，展示目前 live 真正使用的 limit-events / scan-interval / assets / styles
+- [x] T54 本輪：新增熱門拒絕市場樣本清單，聚合最近常被擋的題目與原因
+- [x] T53 本輪：新增最近 30 分鐘趨勢圖，展示 scanned / candidates / executed / failed 變化
+- [x] T52 本輪：新增「本輪不買結論卡」四層占比，區分市場過濾、研究拒絕、風控拒絕、執行拒絕
+- [x] T51 本輪：優化監控頁資訊排版，強化摘要卡、結論區與日誌可讀性
+- [x] T50 本輪：調整監控頁文案為全中文，並將生命週期日誌改為最新在上
+- [x] T49 本輪：將 live 常駐 `scan-interval` 由 `300` 秒下修為 `10` 秒，避免短週期市場漏掃
+- [x] T48 本輪：收斂短週期常駐掃描批次，將 live `limit-events` 由 `500` 下修為 `30`
+- [x] T47 本輪：補齊「未買入原因」彙總輸出，讓研究層可觀測各階段拒絕原因
+- [x] T46 本輪：補齊本地只讀監控 Web，展示機器人執行狀態、近期循環摘要與關鍵日誌
+- [x] T44 本輪：修正 `above_below` 入口過濾邏輯，允許無 timeframe 的固定 strike 市場進入研究與常駐運行
+- [x] T43 本輪：修正研究層 order book 抓取路徑，恢復候選市場深度分析能力
+- [x] T42 本輪：優化執行層最小成交額風控與運行參數，完成今晚常駐上線
+- [x] T41 本輪：優化研究層市場識別，修正加密語義誤判並收斂候選來源
+- [x] T40 下一輪：修正加密市場語義過濾，避免以子字串誤判非加密市場（如 `Netherlands` 命中 `eth`）
+- [x] T39 本輪：修正 live order 狀態映射，讓 `MATCHED` / 成交欄位可被正確解析
+- [x] T37 本輪：驗證新 VPS 出口並重跑正式 micro order smoke
+- [x] T36 下一輪：排查正式送單 403 geoblock，切換至允許交易地區的 VPS / 出口後重跑 micro order smoke
+- [x] T35 本輪：回填正式 CLOB 憑證並重跑 live preflight
+- [x] T34 本輪：回填使用者提供的 `.env` 正式憑證欄位
+- [x] T33 本輪：建立正式版 `.env` 模板，對齊 proxy-only 生產配置
+- [x] C0 盤點現況架構與主要問題
+- [x] T1 建立本輪規格基線：補齊 `spec.md`、`api.md`、`todolist.md`
+- [x] T2 建立研究主線：把 `scan -> spot -> fair_prob -> edge -> signal_logger` 串起來
+- [x] T3 新增統一 CLI 入口，輸出最佳交易機會
+- [x] T4 更新依賴與 README，讓研究模式有明確啟動方式
+- [x] T5 進行語法驗證並整理結果
+- [x] T8 重構主線規格：收斂成 `discover -> score -> risk -> execute` 單一路徑，支援 5m / 15m / 1h / 4h / daily
+- [x] T9 重構研究層：產出可執行候選機會模型，補齊 timeframe / spread / liquidity / execution metadata
+- [x] T10 建立自動交易主迴圈：掃描、排序、風控、下單、輪詢訂單狀態
+- [x] T11 對齊 Polymarket 官方文檔：調整交易 SDK 調用方式、funder / signature type 配置與批次價格抓取
+- [x] T12 更新 CLI / README / 依賴，提供研究模式與自動交易模式入口
+- [x] T13 完成語法驗證與風險盤點，整理未完成缺口
+- [x] T16 清理專案到單一主線版本：完成文件收斂、舊入口刪除、依賴收斂與主線驗證
+- [x] T17 鎖定 `UP / DOWN` 尾盤策略規格基線，更新 `spec.md`、`api.md`、`todolist.md`
+- [x] T18 擴充市場語義與錨點資料契約：補齊 `market_start_timestamp`、`settlement_source_descriptor`、`opening_anchors`
+- [x] T19 重構研究主線：導入 `UpDownTailPricer`、`MarketRuntimeSnapshot`、`net_edge` 排序與觀測擴欄
+- [x] T20 重構執行主線：加入 timeframe-aware 執行策略、倉位 bucket 與同資產同方向風控
+- [x] T21 本輪：補齊依賴環境後重跑完整測試：安裝 `pytest`、`scipy`、`py_clob_client`，完成 `signal_logger` / `live_executor` 驗證
+- [x] T23 本輪：補齊結算後自動領取規格基線，更新 `spec.md`、`api.md`、`todolist.md`
+- [x] T24 建立結算領取模組：掃描 redeemable positions、記錄 `settlement_claims`、透過 relayer 送出 `redeemPositions`
+- [x] T25 接入自動交易主線：新增 CLI 開關、週期掃描與測試驗證
+- [x] T26 補上 `--claim-dry-run`：只掃描可領取倉位、不提交交易，並完成文件與測試
+- [x] T27 本輪：補齊 proxy / funder 相容的結算領取路徑，支援 `POLY_PROXY` 帳戶透過 relayer 正式提交 `redeemPositions`
+- [x] T28 本輪：收斂 proxy-only 生產版規格基線，更新 `spec.md`、`api.md`、`todolist.md`
+- [x] T29 本輪：重構交易主線為 proxy-only 生產模式，補齊 preflight、帳戶驗證與重啟恢復
+- [x] T30 本輪：正式化自動領取與檔案日誌，補齊 claim preflight / fallback 記錄與 CLI 開關
+- [x] T31 本輪：修正全量測試基線，新增 preflight / 恢復 / proxy 驗證測試
+- [x] T32 本輪：補齊 README、`.env` 範本與 `systemd` 常駐部署文件
+- [x] T14 補齊可重建開發環境與測試依賴，讓 `pytest` / `run_auto_trading.py --help` 可在新環境直接啟動
