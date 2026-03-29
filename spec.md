@@ -112,11 +112,13 @@
 - `UP / DOWN` 市場不得再以 YES / NO 雙邊對稱 spread 當唯一流動性門檻；需改為以單邊有效成交成本作為研究層主要 friction 指標
 - 單邊有效成交成本需基於選定方向的 ask 深度估算，例如以固定 notional 小單向 order book 逐檔吃單後的加權平均成交價，衡量實際可成交性
 - 若單一方向缺少足夠 ask 深度，應視為該方向 quote 不可用；若兩邊皆不可用，需在研究早期直接拒絕，避免進入後續定價與 anchor 抓取
-- `UP / DOWN` 研究主線需允許開盤中的 `observe` 市場提早進入評估，不得因尚未進入尾盤窗口而在研究層直接早退
+- `UP / DOWN` 研究主線需允許開盤中的 `observe` 市場先進入 `_analyze_market()`，但只用於統一產生 `window_not_open` 拒絕，不得在 `observe` 狀態繼續做重成本定價流程
 - `window_not_open` 在 `window_state=observe` 時，對使用者文案需明確表達為「已開盤未進尾盤」，不得再只顯示模糊的「未進入窗口」
 - `UP / DOWN` discovery 在保留官方 `/markets` 熱門排序的前提下，研究入口需新增本地窗口距離重排：同題型候選先按「距離 `armed` 窗口還差多久」排序，再按 `expiry` 近端優先，最後以 `volume` 高者優先，避免不同 timeframe 下僅靠到期時間排序而錯過更快進窗的市場
-- `UP / DOWN` 主研究線需區分「市場是否開盤」與「策略窗口是否開啟」：開盤且未過期的市場必須進入 `_analyze_market()`；`observe / armed / attack` 都應完成研究打分，並把 `window_state` 當成 metadata 往後傳，而不是在 discovery 或 research 交界提前吞掉
+- `UP / DOWN` 主研究線需區分「市場是否開盤」與「策略窗口是否開啟」：開盤且未過期的市場必須進入 `_analyze_market()`；其中 `observe` 僅用於統一回傳 `window_not_open`，`armed / attack` 才進入完整研究打分
 - `UP / DOWN` 在 research 前置過濾需額外區分「尚未開盤」市場；若 `market_start_timestamp > now`，應以前置拒絕 `market_not_open_yet` 記錄，避免把尚未生成開盤 K 線的市場混入 `anchor_unavailable`
+- `UP / DOWN` 市場雖可在 scanner / research 交界保留 `observe` 狀態進入 `_analyze_market()`，但 `_analyze_up_down_market()` 在算出 `window_state` 後必須立即以前置拒絕 `window_not_open` 早退，不得對 `observe` 市場繼續做 order book、spot、anchor、波動率等重成本分析
+- `window_not_open` reject detail 至少需帶出 `window_state`、`window_label`、`tau_seconds`、`seconds_to_armed`、`seconds_to_attack`，讓監控頁能正確顯示「已開盤未進尾盤」
 
 ### 3. 定價與打分層
 
@@ -155,7 +157,7 @@
 補充：
 
 - `UP / DOWN` 的 `spread_pct` 在 v1 主線中應表示「選定方向的有效成交成本比率」，不再表示 YES / NO 雙邊最大對稱 spread
-- `UP / DOWN` 的研究拒絕語義需固定為：不得再因 `armed / attack` 入口條件在 `_analyze_up_down_market()` 一開始直接早退；`observe` 市場需完整進行研究打分，只有在深度、anchor、spread、edge、confidence 等實際條件不成立時才可被研究層拒絕
+- `UP / DOWN` 的研究拒絕語義需固定為：不得在 scanner / research 交界提前吞掉開盤中的 `observe` 市場；但 `_analyze_up_down_market()` 在確認 `window_state=observe` 後，需立即以 `window_not_open` 早退，只有 `armed / attack` 市場才進入深度、anchor、spread、edge、confidence 等完整研究判斷
 - `window_state` 應保留在 observation / candidate metadata 中；監控頁需能區分 `observe / armed / attack`，其中 `observe` 對使用者文案顯示為「已開盤未進尾盤」
 - 生產版平衡預設下，研究門檻改為：
   - `15m`: `minimum_lead_z=1.5`、`minimum_net_edge=0.04`
@@ -222,6 +224,7 @@
 - 極短週期或 1 分鐘級市場不得沿用過大的事件掃描批次；常駐預設需將 `limit-events` 收斂到約 `30`，避免單輪掃描時間吃掉可交易窗口
 - 極短週期或 1 分鐘級市場不得使用 `300` 秒級輪詢；常駐預設需將 `scan-interval` 收斂到約 `10` 秒，避免整輪錯過短窗口
 - `run_auto_trading.py` 的 CLI 預設 `scan-interval` 需與正式常駐基線一致，預設值固定為 `10` 秒，不得保留 `60` 秒舊預設
+- `1m` 市場不得列入正式常駐預設 timeframes；目前單輪 research / live 掃描成本無法穩定匹配 `armed=20s`、`attack=8s` 的窗口長度
 - 單資產單方向暴露必須可跨重啟恢復，不能只靠記憶體暫存
 - 對會立即成交的 `BUY` 單，執行前需先檢查最小 marketable notional；不滿足交易所限制時必須在本地直接拒絕，不得把無效請求送到 CLOB
 

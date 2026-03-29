@@ -37,6 +37,7 @@ from .opening_anchor_store import OpeningAnchorStore
 from .reference_builder import ReferenceMethod, ReferencePrice, ReferenceStatus
 from .signal_logger import SignalLogger, SignalObservation
 from .updown_tail_pricer import (
+    TAIL_WINDOWS,
     TAIL_SIGMA_WINDOWS,
     MarketRuntimeSnapshot,
     TailStrategyEstimate,
@@ -375,6 +376,8 @@ class ResearchPipeline:
         for reject_detail in prefiltered_rejects:
             reject_reason = reject_detail["reason"]
             reject_summary[reject_reason] = reject_summary.get(reject_reason, 0) + 1
+            if len(reject_samples) < 20:
+                reject_samples.append(reject_detail)
 
         executable_candidates: List[TradingCandidate] = []
         for parsed, market, tradability in tradable_markets:
@@ -670,6 +673,28 @@ class ResearchPipeline:
         window_state = self.tail_pricer.resolve_window_state(
             parsed.timeframe, tau_seconds
         ).value
+        if window_state not in {"armed", "attack"}:
+            window_config = TAIL_WINDOWS.get(parsed.timeframe, {})
+            armed_seconds = float(window_config.get("armed", 0))
+            attack_seconds = float(window_config.get("attack", 0))
+            return self._build_reject(
+                "window_not_open",
+                parsed,
+                market,
+                detail={
+                    "window_state": window_state,
+                    "window_label": "已開盤未進尾盤"
+                    if window_state == "observe"
+                    else window_state,
+                    "tau_seconds": round(tau_seconds, 1),
+                    "seconds_to_armed": round(
+                        max(tau_seconds - armed_seconds, 0.0), 1
+                    ),
+                    "seconds_to_attack": round(
+                        max(tau_seconds - attack_seconds, 0.0), 1
+                    ),
+                },
+            )
         if tradability.volume < self.min_market_volume:
             return self._build_reject(
                 "volume_too_low",

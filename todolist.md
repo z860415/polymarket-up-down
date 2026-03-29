@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- [x] T122 本輪：修復 `window_not_open` 前置拒絕與 `prefiltered_rejects` 樣本遺失，並明確收斂 live 預設不納入 `1m`
 - [x] T121 本輪：建立 git 提交並推送到 `git@github.com:z860415/polymarket-up-down.git`，確認只包含 `.env.example` 不包含 `.env`
 - [x] T120 本輪：重啟 live 常駐程序，使放寬後的 `15m / 4h` 研究門檻正式生效
 - [x] T119 本輪：放寬 `15m / 4h` 研究門檻並重跑 targeted pytest，驗證 research reject 分布符合新基線

@@ -287,8 +287,8 @@ def test_analyze_up_down_market_rejects_when_both_sides_lack_effective_ask(tmp_p
     assert reject_detail["effective_cost_notional_usdc"] == pytest.approx(1.0)
 
 
-def test_analyze_up_down_market_observe_builds_candidate_after_early_inputs(tmp_path, monkeypatch) -> None:
-    """開盤但未進尾盤時，UP_DOWN 應完成研究評估並產生 candidate。"""
+def test_analyze_up_down_market_observe_rejects_before_expensive_fetches(tmp_path, monkeypatch) -> None:
+    """開盤但未進尾盤時，UP_DOWN 應以前置 `window_not_open` 早退。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))
     pipeline = ResearchPipeline(signal_logger=signal_logger, max_spread_pct=0.1)
 
@@ -362,13 +362,14 @@ def test_analyze_up_down_market_observe_builds_candidate_after_early_inputs(tmp_
         pipeline._analyze_up_down_market(parsed, market, tradability)
     )
 
-    assert candidate is not None
-    assert reject_reason is None
-    assert reject_detail is None
-    assert candidate.opportunity.window_state == "observe"
-    assert candidate.runtime_snapshot is not None
-    assert candidate.runtime_snapshot.window_state == "observe"
-    assert calls == {"orderbook": 2, "spot": 1, "anchor": 1, "volatility": 1}
+    assert candidate is None
+    assert reject_reason == "window_not_open"
+    assert reject_detail is not None
+    assert reject_detail["window_state"] == "observe"
+    assert reject_detail["window_label"] == "已開盤未進尾盤"
+    assert reject_detail["seconds_to_armed"] > 0
+    assert reject_detail["seconds_to_attack"] > 0
+    assert calls == {"orderbook": 0, "spot": 0, "anchor": 0, "volatility": 0}
 
 
 def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) -> None:
@@ -443,6 +444,58 @@ def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) 
     assert result.opportunity_count == 0
     assert result.reject_summary["window_not_open"] == 1
     assert len(result.reject_samples) == 1
+
+
+def test_run_includes_prefiltered_rejects_in_samples(tmp_path, monkeypatch) -> None:
+    """前置過濾拒絕樣本也應進入 reject_samples，供監控頁顯示。"""
+    signal_logger = SignalLogger(str(tmp_path / "research.db"))
+    pipeline = ResearchPipeline(signal_logger=signal_logger, max_spread_pct=0.1)
+
+    async def fake_get_all_events(limit: int = 200, allowed_styles=None):
+        return []
+
+    monkeypatch.setattr(pipeline.scanner, "get_all_events", fake_get_all_events)
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "expand_markets",
+        lambda events, allowed_styles=None: [],
+    )
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "prioritize_markets_for_analysis",
+        lambda tradable_markets, allowed_styles=None, now=None: tradable_markets,
+    )
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "filter_live_markets_for_analysis",
+        lambda tradable_markets, allowed_styles=None, now=None: (
+            [],
+            [
+                {
+                    "reason": "market_not_open_yet",
+                    "market_id": "future-1",
+                    "question": "Bitcoin Up or Down - Future",
+                    "window_state": "not_open",
+                }
+            ],
+        ),
+    )
+
+    try:
+        result = asyncio.run(
+            pipeline.run(
+                limit_events=1,
+                allowed_assets=["BTC"],
+                allowed_styles=["up_down"],
+                allowed_timeframes=["5m"],
+            )
+        )
+    finally:
+        asyncio.run(pipeline.close())
+
+    assert result.reject_summary["market_not_open_yet"] == 1
+    assert len(result.reject_samples) == 1
+    assert result.reject_samples[0]["reason"] == "market_not_open_yet"
 
 
 def test_run_passes_normalized_styles_to_discovery(tmp_path, monkeypatch) -> None:

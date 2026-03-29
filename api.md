@@ -133,17 +133,18 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - `anchor_unavailable`
   - `spread_too_wide`
   - `lead_z_too_low` / `edge_too_low`
-- `observe` 市場需完成研究層定價與打分；在使用者文案上，`window_state=observe` 時仍需明確顯示為「已開盤未進尾盤」
+- `observe` 市場不需完成研究層定價與打分；它只需在 `_analyze_up_down_market()` 內統一產出 `window_not_open`，且在使用者文案上明確顯示為「已開盤未進尾盤」
+- `_analyze_up_down_market()` 在算出 `window_state` 後，若市場仍為 `observe`，需立即以 `window_not_open` 拒絕並早退，不得繼續進行 order book、spot、anchor、volatility 抓取
+- `window_not_open` reject detail 至少需帶出：
+  - `window_state`
+  - `window_label`
+  - `tau_seconds`
+  - `seconds_to_armed`
+  - `seconds_to_attack`
 - 研究門檻基線：
   - `15m`：`minimum_lead_z=1.5`、`minimum_net_edge=0.04`
   - `4h`：`minimum_lead_z=1.4`、`minimum_net_edge=0.03`
   - 其他 timeframe 維持既有平衡預設
-- 舊版 `window_not_open` reject detail 至少需帶出：
-  - `window_state`
-  - `window_label`
-  - `tau_seconds`
-  - `seconds_to_armed`（僅 `observe`）
-  - `seconds_to_attack`（可選，用於監控補充）
 - `market_not_open_yet` reject detail 至少需帶出：
   - `window_state`
   - `market_start_timestamp`
@@ -154,7 +155,8 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - 若僅單邊缺價，保留另一邊進入定價，但若最終選定方向缺價，需以 `ask_quote_missing` 拒絕
 - `/markets` 遠端查詢仍保留 `order=volume&ascending=false`，但研究層在只跑 `up_down` 或處理 `UP_DOWN` 候選集合時，需於本地重排為 `time_to_armed asc, expiry asc, volume desc`
 - `time_to_armed` 定義為 `max(tau_seconds - armed_window_seconds, 0)`；已進入 `armed / attack` 的市場其 `time_to_armed` 視為 `0`
-- `UP_DOWN` 在 scanner / research 交界只允許前置擋掉 `parsed.expiry <= now` 的市場；`observe` 市場需進入 `_analyze_market()`，並在研究成功後以 `window_state=observe` 傳給後續選擇 / 執行層
+- `UP_DOWN` 在 scanner / research 交界只允許前置擋掉 `parsed.expiry <= now` 的市場；`observe` 市場需進入 `_analyze_market()`，由研究層統一回 `window_not_open`，不得以研究成功候選往後傳
+- `prefiltered_rejects` 不得只進 `reject_summary`；同一批前置拒絕樣本也需依 `reject_samples` 上限寫入結果，供監控頁顯示具體樣本
 - 對來自 `/events` 補充來源的 `UP_DOWN` 市場，若 `parsed.expiry <= now`，應在 research 早期直接排除，不得進入 tradability 或 live 窗口過濾
 - 執行層對 `UP_DOWN` 候選正式送單前，需重新抓取選定方向對應 token 的最新 order book
 - maker / taker 價格選擇需以最新 order book 為準，不得直接沿用 research candidate 內的歷史 `yes_bid / yes_ask / no_bid / no_ask`
@@ -199,6 +201,7 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
 - `--timeframes`
   - 說明：允許週期，逗號分隔
   - 預設：`5m,15m,1h,4h,1d`
+  - 補充：正式常駐預設不得納入 `1m`
 - `--styles`
   - 說明：允許市場風格，逗號分隔；v1 預設只跑 `up_down`
   - 預設：`up_down`
