@@ -2,13 +2,13 @@
 
 ## 進行中
 
-- [ ] T121 本輪：建立 git 提交並推送到 `git@github.com:z860415/polymarket-up-down.git`，確認只包含 `.env.example` 不包含 `.env`
 - [ ] T38 本輪：執行保成交優先的 crypto micro order smoke，驗證 FILLED 終態與成交回寫（目前受交易所 `$1` 最小 marketable BUY 限制阻塞）
 - [ ] T22 下一輪：補齊更完整的 CI / dev setup，避免依賴漂移與本機 Python 版本差異
 - [ ] T45 下一輪：補齊非 Binance 現貨資產的價格來源 / 白名單收斂，避免 `MEGA` 類市場反覆進入研究噪音
 
 ## 已完成
 
+- [x] T121 本輪：建立 git 提交並推送到 `git@github.com:z860415/polymarket-up-down.git`，確認只包含 `.env.example` 不包含 `.env`
 - [x] T120 本輪：重啟 live 常駐程序，使放寬後的 `15m / 4h` 研究門檻正式生效
 - [x] T119 本輪：放寬 `15m / 4h` 研究門檻並重跑 targeted pytest，驗證 research reject 分布符合新基線
 - [x] T116 本輪：重啟 live / monitor 程序並清空 `logs/` 歷史日誌，確認 Web 監控只顯示新進程輸出
