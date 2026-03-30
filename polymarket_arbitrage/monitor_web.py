@@ -1019,8 +1019,8 @@ def _render_html(config: MonitorConfig) -> str:
             candidateLog.innerHTML = (logs.candidate || []).slice(0, 20).map(line => {{
                 // Extract reason from log line
                 let reasonText = line;
-                if (line.includes('reason\': \'')) {{
-                    const match = line.match(/reason\':\s*'([^']+)'/);
+                if (line.includes("reason': '")) {{
+                    const match = line.match(/reason':\s*'([^']+)'/);
                     if (match) {{
                         const reason = match[1];
                         const label = reasonNames[reason] || reason;
