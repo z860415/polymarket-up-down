@@ -836,21 +836,22 @@ class ResearchPipeline:
                     "effective_cost_notional_usdc": self.effective_cost_notional_usdc,
                 },
             )
-        if abs(tail_estimate.lead_z) < self.tail_pricer.minimum_lead_z(
-            parsed.timeframe, window_state
-        ):
-            return self._build_reject(
-                "lead_z_too_low",
-                parsed,
-                market,
-                detail={
-                    "lead_z": tail_estimate.lead_z,
-                    "minimum_lead_z": self.tail_pricer.minimum_lead_z(
-                        parsed.timeframe, window_state
-                    ),
-                    "window_state": window_state,
-                },
-            )
+        # NOTE: lead_z check disabled - strategy now purely edge-based
+        # if abs(tail_estimate.lead_z) < self.tail_pricer.minimum_lead_z(
+        #     parsed.timeframe, window_state
+        # ):
+        #     return self._build_reject(
+        #         "lead_z_too_low",
+        #         parsed,
+        #         market,
+        #         detail={
+        #             "lead_z": tail_estimate.lead_z,
+        #             "minimum_lead_z": self.tail_pricer.minimum_lead_z(
+        #                 parsed.timeframe, window_state
+        #             ),
+        #             "window_state": window_state,
+        #         },
+        #     )
         if tail_estimate.selected_net_edge < self.tail_pricer.minimum_net_edge(
             parsed.timeframe, window_state
         ):

@@ -41,19 +41,19 @@ TAIL_WINDOWS = {
 }
 
 MIN_NET_EDGE = {
-    "1m": 0.08,
-    "5m": 0.06,
-    "15m": 0.04,
-    "1h": 0.04,
-    "4h": 0.03,
-    "12h": 0.035,
-    "1d": 0.035,
+    "1m": 0.12,    # was 0.08
+    "5m": 0.10,    # was 0.06
+    "15m": 0.08,   # was 0.04
+    "1h": 0.08,    # was 0.04
+    "4h": 0.06,    # was 0.03
+    "12h": 0.07,   # was 0.035
+    "1d": 0.07,    # was 0.035
 }
 
 MIN_LEAD_Z = {
     "1m": 2.5,
-    "5m": 2.3,
-    "15m": 1.5,
+    "5m": 1.5,      # 下調: 2.3 → 1.5
+    "15m": 1.0,     # 下調: 1.5 → 1.0
     "1h": 1.9,
     "4h": 1.4,
     "12h": 1.7,
@@ -74,13 +74,13 @@ TIMEFRAME_POSITION_BUCKET = {
 # Observe 階段（盤口定價套利）：門檻比尾盤低，只用 maker 掛單
 # ---------------------------------------------------------------------------
 OBSERVE_MIN_NET_EDGE = {
-    "1m": 0.04,
-    "5m": 0.03,
-    "15m": 0.02,
-    "1h": 0.02,
-    "4h": 0.02,
-    "12h": 0.02,
-    "1d": 0.02,
+    "1m": 0.08,    # was 0.04
+    "5m": 0.06,    # was 0.03
+    "15m": 0.05,   # was 0.02
+    "1h": 0.05,    # was 0.02
+    "4h": 0.05,    # was 0.02
+    "12h": 0.05,   # was 0.02
+    "1d": 0.05,    # was 0.02
 }
 
 OBSERVE_MIN_LEAD_Z = {
@@ -251,8 +251,8 @@ class UpDownTailPricer:
     ) -> bool:
         """判斷 observe 階段的市場是否達到掛單門檻。"""
         min_edge = self.minimum_net_edge(timeframe, "observe")
-        min_z = self.minimum_lead_z(timeframe, "observe")
-        return net_edge >= min_edge and abs(lead_z) >= min_z
+        # NOTE: lead_z check removed - purely edge-based strategy
+        return net_edge >= min_edge
 
     def _estimate_fee_cost(self, snapshot: MarketRuntimeSnapshot) -> float:
         """估算成本中的手續費部分。"""

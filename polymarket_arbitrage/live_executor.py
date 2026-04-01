@@ -1267,16 +1267,17 @@ class LiveExecutor:
         timeframe = opportunity.timeframe or ""
         ws = snapshot.window_state
         min_edge = self._tail_pricer.minimum_net_edge(timeframe, ws)
-        min_lead_z = self._tail_pricer.minimum_lead_z(timeframe, ws)
         if estimate.selected_net_edge < min_edge:
             return self._reject_tail_candidate(
                 candidate,
                 f"net_edge 不足: {estimate.selected_net_edge:.4f} < {min_edge:.4f}",
             )
-        if abs(estimate.lead_z) < min_lead_z:
-            return self._reject_tail_candidate(
-                candidate, f"lead_z 不足: {estimate.lead_z:.4f} < {min_lead_z:.4f}"
-            )
+        # NOTE: lead_z check disabled - purely edge-based strategy
+        # min_lead_z = self._tail_pricer.minimum_lead_z(timeframe, ws)
+        # if abs(estimate.lead_z) < min_lead_z:
+        #     return self._reject_tail_candidate(
+        #         candidate, f"lead_z 不足: {estimate.lead_z:.4f} < {min_lead_z:.4f}"
+        #     )
         if ws not in {"armed", "attack", "observe"}:
             return self._reject_tail_candidate(candidate, f"狀態不允許下單: {ws}")
 
