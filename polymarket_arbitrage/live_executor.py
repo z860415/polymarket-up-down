@@ -1270,10 +1270,10 @@ class LiveExecutor:
         timeframe = opportunity.timeframe or ""
         ws = snapshot.window_state
         min_edge = self._tail_pricer.minimum_net_edge(timeframe, ws)
-        if estimate.selected_net_edge < min_edge:
+        if abs(estimate.selected_net_edge) < min_edge:
             return self._reject_tail_candidate(
                 candidate,
-                f"net_edge 不足: {estimate.selected_net_edge:.4f} < {min_edge:.4f}",
+                f"net_edge 不足: {estimate.selected_net_edge:.4f} (abs={abs(estimate.selected_net_edge):.4f}) < {min_edge:.4f}",
             )
         # NOTE: lead_z check disabled - purely edge-based strategy
         # min_lead_z = self._tail_pricer.minimum_lead_z(timeframe, ws)
