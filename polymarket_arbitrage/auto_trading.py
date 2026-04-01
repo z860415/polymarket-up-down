@@ -156,6 +156,7 @@ class AutoTradingPipeline:
         executions: List[Any] = []
         claim_results: List[Any] = []
 
+        lifecycle_logger.info("[DEBUG] run_cycle mode=%s | selected_candidates=%d", mode, len(selected_candidates))
         if mode == "live":
             if self.live_executor is None:
                 raise ValueError("live 模式需要提供 LiveExecutor")
