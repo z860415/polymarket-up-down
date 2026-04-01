@@ -652,18 +652,34 @@ class LiveExecutor:
             self._clob_client.set_api_creds(api_creds)
         return self._clob_client
 
-    def _extract_best_book_price(self, levels: Any) -> float:
-        """從 order book 第一檔提取價格，兼容 SDK 物件與 dict。"""
+    def _extract_best_book_price(self, levels: Any, is_bid: bool = True) -> float:
+        """從 order book 提取最優價格，兼容 SDK 物件與 dict。
+        
+        Args:
+            levels: order book 檔位列表
+            is_bid: True 表示買單(bids)，False 表示賣單(asks)
+                   bids 取最高價，asks 取最低價
+        """
         if not levels:
             return 0.0
 
-        level = levels[0]
-        raw_price = getattr(level, "price", None)
-        if raw_price is None and isinstance(level, dict):
-            raw_price = level.get("price")
-        if raw_price in (None, ""):
+        # 提取所有價格
+        prices = []
+        for level in levels:
+            raw_price = getattr(level, "price", None)
+            if raw_price is None and isinstance(level, dict):
+                raw_price = level.get("price")
+            if raw_price not in (None, ""):
+                try:
+                    prices.append(float(raw_price))
+                except (ValueError, TypeError):
+                    continue
+        
+        if not prices:
             return 0.0
-        return float(raw_price)
+        
+        # bids 取最高，asks 取最低
+        return max(prices) if is_bid else min(prices)
 
     def _refresh_tail_side_quote(
         self, candidate: "TradingCandidate"
@@ -691,8 +707,8 @@ class LiveExecutor:
                 bids = payload.get("bids")
             if asks is None and isinstance(payload, dict):
                 asks = payload.get("asks")
-            return self._extract_best_book_price(bids), self._extract_best_book_price(
-                asks
+            return self._extract_best_book_price(bids, is_bid=True), self._extract_best_book_price(
+                asks, is_bid=False
             )
         except Exception as exc:
             error_logger.error(
