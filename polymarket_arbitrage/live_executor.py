@@ -899,12 +899,15 @@ class LiveExecutor:
         edge_yes = fair_prob.p_yes - yes_ask - estimated_fee_pct
         edge_no = fair_prob.p_no - no_ask - estimated_fee_pct if no_ask else -1.0
 
-        # 選擇較大的 edge
-        if edge_yes >= edge_no and edge_yes >= self.risk.min_edge_threshold:
+        # 選擇較大的 edge（使用絕對值比較，支持做多和做空）
+        abs_edge_yes = abs(edge_yes)
+        abs_edge_no = abs(edge_no) if no_ask else 0.0
+        
+        if abs_edge_yes >= abs_edge_no and edge_yes >= self.risk.min_edge_threshold:
             side = "YES"
             edge = edge_yes
             expected_price = yes_ask
-        elif edge_no >= self.risk.min_edge_threshold:
+        elif abs_edge_no >= self.risk.min_edge_threshold:
             side = "NO"
             edge = edge_no
             expected_price = no_ask

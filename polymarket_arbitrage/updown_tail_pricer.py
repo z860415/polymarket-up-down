@@ -252,7 +252,8 @@ class UpDownTailPricer:
         """判斷 observe 階段的市場是否達到掛單門檻。"""
         min_edge = self.minimum_net_edge(timeframe, "observe")
         # NOTE: lead_z check removed - purely edge-based strategy
-        return net_edge >= min_edge
+        # Use abs() to allow both positive (long) and negative (short) edges
+        return abs(net_edge) >= min_edge
 
     def _estimate_fee_cost(self, snapshot: MarketRuntimeSnapshot) -> float:
         """估算成本中的手續費部分。"""

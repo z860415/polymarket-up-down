@@ -852,7 +852,7 @@ class ResearchPipeline:
         #             "window_state": window_state,
         #         },
         #     )
-        if tail_estimate.selected_net_edge < self.tail_pricer.minimum_net_edge(
+        if abs(tail_estimate.selected_net_edge) < self.tail_pricer.minimum_net_edge(
             parsed.timeframe, window_state
         ):
             return self._build_reject(
