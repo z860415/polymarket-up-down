@@ -1444,8 +1444,14 @@ class LiveExecutor:
         timeframe = opportunity.timeframe or ""
         if timeframe in {"5m", "15m"}:
             required_edge = self._tail_pricer.minimum_net_edge(timeframe) * 2
+            # 5m 改為 armed/attack 都可進場；15m 維持 attack
+            if timeframe == "5m":
+                allowed_states = {"armed", "attack"}
+            else:
+                allowed_states = {"attack"}
+            
             if (
-                snapshot.window_state == "attack"
+                snapshot.window_state in allowed_states
                 and estimate.selected_net_edge >= required_edge
             ):
                 return taker_price

@@ -21,6 +21,10 @@ class BinanceClient:
 
     def get_spot_price(self, symbol: str) -> Optional[float]:
         """获取实时现货价格"""
+        # HYPE 不在 Binance 上，直接返回 None 避免重複請求
+        if symbol == "HYPEUSDT":
+            return None
+        
         try:
             url = f"{self.base_url}/api/v3/ticker/price"
             response = self.session.get(url, params={"symbol": symbol}, timeout=3)

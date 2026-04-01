@@ -41,19 +41,19 @@ TAIL_WINDOWS = {
 }
 
 MIN_NET_EDGE = {
-    "1m": 0.12,    # was 0.08
-    "5m": 0.10,    # was 0.06
-    "15m": 0.08,   # was 0.04
-    "1h": 0.08,    # was 0.04
-    "4h": 0.06,    # was 0.03
-    "12h": 0.07,   # was 0.035
-    "1d": 0.07,    # was 0.035
+    "1m": 0.08,    # was 0.12
+    "5m": 0.06,    # was 0.10
+    "15m": 0.05,   # was 0.08 → 0.05 (用戶要求 0.02, 但考慮成本設 0.05)
+    "1h": 0.05,    # was 0.08
+    "4h": 0.04,    # was 0.06 → 0.04 (用戶要求 0.025)
+    "12h": 0.05,   # was 0.07
+    "1d": 0.05,    # was 0.07
 }
 
 MIN_LEAD_Z = {
     "1m": 2.5,
-    "5m": 1.5,      # 下調: 2.3 → 1.5
-    "15m": 1.0,     # 下調: 1.5 → 1.0
+    "5m": 0.3,      # 下調: 1.5 → 0.3 (用戶要求)
+    "15m": 0.8,     # 下調: 1.0 → 0.8 (attack 用固定值 0.8)
     "1h": 1.9,
     "4h": 1.4,
     "12h": 1.7,
@@ -74,13 +74,13 @@ TIMEFRAME_POSITION_BUCKET = {
 # Observe 階段（盤口定價套利）：門檻比尾盤低，只用 maker 掛單
 # ---------------------------------------------------------------------------
 OBSERVE_MIN_NET_EDGE = {
-    "1m": 0.08,    # was 0.04
-    "5m": 0.06,    # was 0.03
-    "15m": 0.05,   # was 0.02
-    "1h": 0.05,    # was 0.02
-    "4h": 0.05,    # was 0.02
-    "12h": 0.05,   # was 0.02
-    "1d": 0.05,    # was 0.02
+    "1m": 0.05,    # was 0.08
+    "5m": 0.04,    # was 0.06 → 0.04
+    "15m": 0.03,   # was 0.05 → 0.03 (用戶要求 0.02)
+    "1h": 0.03,    # was 0.05
+    "4h": 0.03,    # was 0.05 → 0.025 (用戶要求)
+    "12h": 0.03,   # was 0.05
+    "1d": 0.03,    # was 0.05
 }
 
 OBSERVE_MIN_LEAD_Z = {
@@ -236,9 +236,20 @@ class UpDownTailPricer:
 
     def minimum_lead_z(self, timeframe: str, window_state: str = "armed") -> float:
         """取得各週期最低 lead_z。"""
+        # attack 窗口使用固定門檻，不適用 adaptive 縮放
+        if window_state == "attack":
+            if timeframe in ("5m", "15m"):
+                return 0.8
+            # 其他時間框架 attack 狀態也設上限
+            computed = MIN_LEAD_Z.get(timeframe, 2.0)
+            return min(computed, 1.2)
+        
         if window_state == "observe":
             return OBSERVE_MIN_LEAD_Z.get(timeframe, 0.5)
-        return MIN_LEAD_Z.get(timeframe, 2.0)
+        
+        # armed 狀態：正常取值但設硬上限 1.2
+        computed = MIN_LEAD_Z.get(timeframe, 2.0)
+        return min(computed, 1.2)
 
     def position_bucket(self, timeframe: str, window_state: str = "armed") -> float:
         """取得各週期最大倉位比例。"""
