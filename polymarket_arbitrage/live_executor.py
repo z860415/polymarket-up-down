@@ -1287,6 +1287,10 @@ class LiveExecutor:
         # observe 使用不同的 exposure key 前綴，方便後續管理
         exposure_prefix = "obs" if ws == "observe" else "tail"
         exposure_key = f"{exposure_prefix}:{opportunity.asset}:{estimate.selected_side}"
+        lifecycle_logger.info(
+            "[DEBUG] 檢查倉位 | exposure_key=%s | existing=%s",
+            exposure_key, list(self._directional_exposure_keys)
+        )
         if exposure_key in self._directional_exposure_keys:
             return self._reject_tail_candidate(
                 candidate, f"同資產同方向已有倉位: {exposure_key}"
@@ -1311,10 +1315,18 @@ class LiveExecutor:
             bucket_amount,
         )
         passed, reason = self.check_risk_limits(account, amount)
+        lifecycle_logger.info(
+            "[DEBUG] 檢查風控 | passed=%s | reason=%s | amount=%.4f | balance=%.2f",
+            passed, reason, amount, account.usdc_balance
+        )
         if not passed:
             return self._reject_tail_candidate(candidate, f"Risk limit: {reason}")
 
         refreshed_bid, refreshed_ask = self._refresh_tail_side_quote(candidate)
+        lifecycle_logger.info(
+            "[DEBUG] 檢查 order book | bid=%.4f | ask=%.4f",
+            refreshed_bid, refreshed_ask
+        )
         if refreshed_bid <= 0 and refreshed_ask <= 0:
             return self._reject_tail_candidate(
                 candidate, "送單前最新 order book 不可用"
@@ -1324,6 +1336,10 @@ class LiveExecutor:
             candidate,
             refreshed_bid=refreshed_bid,
             refreshed_ask=refreshed_ask,
+        )
+        lifecycle_logger.info(
+            "[DEBUG] 檢查價格 | order_price=%.4f",
+            order_price
         )
         if order_price <= 0:
             return self._reject_tail_candidate(candidate, "找不到可用的尾盤下單價格")
