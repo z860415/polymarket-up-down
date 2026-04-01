@@ -1630,7 +1630,7 @@ class LiveExecutor:
         """取消訂單"""
         try:
             client = self._get_clob_client()
-            client.cancel_order(order_id)
+            client.cancel(order_id)
 
             if order_id in self._pending_orders:
                 self._pending_orders[order_id].status = LiveExecutionStatus.CANCELLED
