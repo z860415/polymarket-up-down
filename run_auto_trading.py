@@ -46,7 +46,7 @@ def print_preflight_report(report) -> None:
 def build_argument_parser() -> argparse.ArgumentParser:
     """建立自動交易 CLI 參數。"""
     parser = argparse.ArgumentParser(description="Polymarket 自動交易主線")
-    parser.add_argument("--mode", choices=["research", "live"], default="research", help="執行模式")
+    parser.add_argument("--mode", choices=["research", "live"], default="live", help="執行模式")
     parser.add_argument(
         "--preflight-only",
         action="store_true",
