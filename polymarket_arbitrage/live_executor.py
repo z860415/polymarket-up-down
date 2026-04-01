@@ -1312,13 +1312,15 @@ class LiveExecutor:
         # observe 使用不同的 exposure key 前綴，方便後續管理
         exposure_prefix = "obs" if ws == "observe" else "tail"
         exposure_key = f"{exposure_prefix}:{opportunity.asset}:{estimate.selected_side}"
+        # 同時檢查無前綴格式（舊格式相容）
+        legacy_key = f"{opportunity.asset}:{estimate.selected_side}"
         lifecycle_logger.info(
-            "[DEBUG] 檢查倉位 | exposure_key=%s | existing=%s",
-            exposure_key, list(self._directional_exposure_keys)
+            "[DEBUG] 檢查倉位 | exposure_key=%s | legacy_key=%s | existing=%s",
+            exposure_key, legacy_key, list(self._directional_exposure_keys)
         )
-        if exposure_key in self._directional_exposure_keys:
+        if exposure_key in self._directional_exposure_keys or legacy_key in self._directional_exposure_keys:
             return self._reject_tail_candidate(
-                candidate, f"同資產同方向已有倉位: {exposure_key}"
+                candidate, f"同資產同方向已有倉位: {exposure_key} (或 {legacy_key})"
             )
 
         account = self.get_account_state()
@@ -1404,6 +1406,7 @@ class LiveExecutor:
         )
         if result.status in {LiveExecutionStatus.SUBMITTED, LiveExecutionStatus.FILLED}:
             self._directional_exposure_keys.add(exposure_key)
+            self._directional_exposure_keys.add(legacy_key)  # 同時添加無前綴格式
         return result
 
     def _select_tail_order_price(
