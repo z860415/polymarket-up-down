@@ -15,6 +15,9 @@ import logging
 import json
 import sqlite3
 from typing import TYPE_CHECKING, Optional, Dict, List, Any, Tuple
+
+# 定義 logger
+lifecycle_logger = logging.getLogger("polymarket.lifecycle")
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
