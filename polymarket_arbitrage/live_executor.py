@@ -1237,6 +1237,12 @@ class LiveExecutor:
 
     def execute_candidate(self, candidate: "TradingCandidate") -> LiveExecutionResult:
         """以研究候選機會為單位執行交易。"""
+        lifecycle_logger.info(
+            "[DEBUG] execute_candidate 入口 | style=%s | has_tail_estimate=%s | has_snapshot=%s",
+            candidate.opportunity.market_style,
+            candidate.tail_estimate is not None,
+            candidate.runtime_snapshot is not None,
+        )
         if (
             candidate.opportunity.market_style == "UP_DOWN"
             and candidate.tail_estimate is not None
