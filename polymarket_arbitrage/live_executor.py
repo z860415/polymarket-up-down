@@ -1314,15 +1314,24 @@ class LiveExecutor:
             if estimate.selected_side == "YES"
             else opportunity.no_ask
         )
-        amount = min(
-            self.calculate_position_size(
-                edge=estimate.selected_net_edge,
-                confidence=opportunity.confidence_score,
-                yes_ask=reference_ask or 0.01,
-                account=account,
-            ),
-            bucket_amount,
+        # 計算目標倉位（Kelly 公式）
+        kelly_size = self.calculate_position_size(
+            edge=estimate.selected_net_edge,
+            confidence=opportunity.confidence_score,
+            yes_ask=reference_ask or 0.01,
+            account=account,
         )
+        
+        # 受 bucket 限制，但確保 >= min_position
+        # 如果 bucket 太小導致 < min_position，則不下單（資金不足）
+        if bucket_amount < self.risk.min_position_per_trade:
+            return self._reject_tail_candidate(
+                candidate, 
+                f"倉位比例不足: bucket={bucket_amount:.2f} < min={self.risk.min_position_per_trade}"
+            )
+        
+        amount = min(kelly_size, bucket_amount)
+        amount = max(amount, self.risk.min_position_per_trade)  # 保底
         passed, reason = self.check_risk_limits(account, amount)
         lifecycle_logger.info(
             "[DEBUG] 檢查風控 | passed=%s | reason=%s | amount=%.4f | balance=%.2f",
