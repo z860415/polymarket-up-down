@@ -563,7 +563,8 @@ class ResearchPipeline:
             yes_ask,
             no_ask,
         )
-        if selected_edge < self.min_edge_threshold:
+        # 選項 2: 統一使用 abs() 篩選，並拒絕負 edge
+        if abs(selected_edge) < self.min_edge_threshold:
             return self._build_reject(
                 "edge_too_low",
                 parsed,
@@ -571,6 +572,17 @@ class ResearchPipeline:
                 detail={
                     "selected_edge": selected_edge,
                     "min_edge_threshold": self.min_edge_threshold,
+                },
+            )
+        if selected_edge < 0:
+            return self._build_reject(
+                "both_edges_negative",
+                parsed,
+                market,
+                detail={
+                    "selected_edge": selected_edge,
+                    "edge_yes": fair_prob.p_yes - yes_ask,
+                    "edge_no": fair_prob.p_no - no_ask,
                 },
             )
 
@@ -852,18 +864,28 @@ class ResearchPipeline:
         #             "window_state": window_state,
         #         },
         #     )
-        if abs(tail_estimate.selected_net_edge) < self.tail_pricer.minimum_net_edge(
-            parsed.timeframe, window_state
-        ):
+        min_edge = self.tail_pricer.minimum_net_edge(parsed.timeframe, window_state)
+        if abs(tail_estimate.selected_net_edge) < min_edge:
             return self._build_reject(
                 "edge_too_low",
                 parsed,
                 market,
                 detail={
                     "selected_edge": tail_estimate.selected_net_edge,
-                    "min_edge_threshold": self.tail_pricer.minimum_net_edge(
-                        parsed.timeframe, window_state
-                    ),
+                    "min_edge_threshold": min_edge,
+                    "window_state": window_state,
+                },
+            )
+        # 選項 1: 兩邊都負時拒絕交易 (selected_net_edge < 0 表示兩邊都是負 edge)
+        if tail_estimate.selected_net_edge < 0:
+            return self._build_reject(
+                "both_edges_negative",
+                parsed,
+                market,
+                detail={
+                    "selected_edge": tail_estimate.selected_net_edge,
+                    "net_edge_up": tail_estimate.net_edge_up,
+                    "net_edge_down": tail_estimate.net_edge_down,
                     "window_state": window_state,
                 },
             )
