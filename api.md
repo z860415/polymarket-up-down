@@ -126,8 +126,11 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - `has_token_ids=true` 的前提是 YES / NO 兩邊 token 都存在
   - `book_available=true` 的前提是 YES / NO 兩邊 order book 都成功取得
   - 任一邊缺失時不得先計入 `clob_eligible` 或 `pricing_verified`
-- `ResearchPipeline.run()` 只可把 `tradability.book_available=true` 的市場放入 `tradable_markets`
-- scanner 若已取得雙邊 order book，需把標準化後的 `yes_orderbook` / `no_orderbook` 置於 `MarketTradability` 內供 research 重用；research 僅在快照缺失時才允許 fallback 重抓
+- `ResearchPipeline.run()` 需改為兩段式：
+  - 第一段：`check_tradability(..., verify_depth=False)`，只做 status、雙邊 token 與輕量 quote 檢查
+  - 第二段：在排序與 `filter_live_markets_for_analysis()` 後，才對剩餘市場補做雙邊 order book 驗證
+- `tradable_markets` 在第一段只代表「值得進一步檢查」；只有第二段 `tradability.book_available=true` 的市場才可進入 `_analyze_market()`
+- scanner 若已取得第二段雙邊 order book，需把標準化後的 `yes_orderbook` / `no_orderbook` 置於 `MarketTradability` 內供 research 重用；research 僅在快照缺失時才允許 fallback 重抓
 - `UP_DOWN` 研究層需改用單邊有效成交成本模型：
   - 先根據選定方向的 ask 檔位估算固定 notional 的加權平均成交價
   - 再以該有效成交價相對最佳 ask 的偏離，作為 `spread_pct` / friction 門檻

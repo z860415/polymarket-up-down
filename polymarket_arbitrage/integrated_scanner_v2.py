@@ -858,8 +858,10 @@ class PolymarketScannerV2:
     # Phase 3: Tradability
     # =========================================================================
 
-    async def check_tradability(self, market: Dict) -> MarketTradability:
-        """檢查市場可交易性"""
+    async def check_tradability(
+        self, market: Dict, verify_depth: bool = True
+    ) -> MarketTradability:
+        """檢查市場可交易性，可選擇是否立即驗證雙邊深度。"""
 
         market_id = market.get("conditionId", "")
         slug = market.get("slug", "")
@@ -924,15 +926,16 @@ class PolymarketScannerV2:
             )
             midpoint_available = yes_midpoint_available and no_midpoint_available
 
-            yes_orderbook, no_orderbook = await asyncio.gather(
-                self._fetch_orderbook(yes_token),
-                self._fetch_orderbook(no_token),
-            )
-            book_available = yes_orderbook is not None and no_orderbook is not None
+            if verify_depth:
+                yes_orderbook, no_orderbook = await asyncio.gather(
+                    self._fetch_orderbook(yes_token),
+                    self._fetch_orderbook(no_token),
+                )
+                book_available = yes_orderbook is not None and no_orderbook is not None
 
             if not price_available and not midpoint_available and not book_available:
                 clob_reject = RejectReason.PRICE_ENDPOINT_UNAVAILABLE
-            elif not book_available:
+            elif verify_depth and not book_available:
                 clob_reject = RejectReason.BOOK_NOT_FOUND
 
         # 4. 綜合評估
@@ -971,6 +974,39 @@ class PolymarketScannerV2:
             yes_orderbook=yes_orderbook,
             no_orderbook=no_orderbook,
         )
+
+    async def verify_orderbook_depth(
+        self, tradability: MarketTradability
+    ) -> MarketTradability:
+        """在第二階段為 tradability 補做 YES/NO 雙邊深度驗證。"""
+        if (
+            not tradability.is_clob_eligible
+            or not tradability.yes_token
+            or not tradability.no_token
+        ):
+            return tradability
+        if tradability.yes_orderbook is not None and tradability.no_orderbook is not None:
+            tradability.book_available = True
+            tradability.is_book_verified = True
+            return tradability
+
+        tradability.yes_orderbook, tradability.no_orderbook = await asyncio.gather(
+            self._fetch_orderbook(tradability.yes_token),
+            self._fetch_orderbook(tradability.no_token),
+        )
+        tradability.book_available = (
+            tradability.yes_orderbook is not None
+            and tradability.no_orderbook is not None
+        )
+        tradability.is_book_verified = (
+            tradability.is_clob_eligible and tradability.book_available
+        )
+        if tradability.book_available:
+            if tradability.clob_reject == RejectReason.BOOK_NOT_FOUND:
+                tradability.clob_reject = None
+        else:
+            tradability.clob_reject = RejectReason.BOOK_NOT_FOUND
+        return tradability
 
     async def _fetch_orderbook(self, token_id: str) -> Optional[Dict[str, Any]]:
         """透過官方 SDK 抓取單一 token 的標準化訂單簿。"""

@@ -108,7 +108,10 @@
 - 研究層抓取 order book 時不得依賴已失效的 `/book/{token}` 舊路徑，需改用官方 SDK 公開方法或當前有效公開端點
 - tradability 的 token 契約必須是 YES / NO 雙邊完整驗證；只要任一邊 token 缺失，即視為 `missing_token_ids`，不得先算入 `clob_eligible`
 - tradability 的深度驗證不得只檢查 YES 邊；需以 YES / NO 雙邊 order book 同時可取得為準，避免不完整二元市場混入後續漏斗
-- scanner 若已完成雙邊 order book 驗證，需保留該份標準化深度快照並傳遞給 research 重用；research 不得無條件重抓同一市場深度
+- research 主線的 tradability 需拆成兩段：
+  - 第一段只做 status、雙邊 token 與輕量 quote 可用性檢查
+  - 第二段在本地排序與 live 窗口過濾後，才對真正待分析市場抓取 YES / NO 雙邊 order book
+- scanner 若已完成第二段雙邊 order book 驗證，需保留該份標準化深度快照並傳遞給 research 重用；research 不得無條件重抓同一市場深度
 - 嚴格依市場結算來源抓取開盤錨點，不允許自定義替代值
 - 依 timeframe 估算尾盤剩餘波動率
 - 建立研究與執行共用的市場狀態快照
@@ -122,7 +125,8 @@
 - `UP / DOWN` 在 research 前置過濾需額外區分「尚未開盤」市場；若 `market_start_timestamp > now`，應以前置拒絕 `market_not_open_yet` 記錄，避免把尚未生成開盤 K 線的市場混入 `anchor_unavailable`
 - `UP / DOWN` 市場雖可在 scanner / research 交界保留 `observe` 狀態進入 `_analyze_market()`，但 `_analyze_up_down_market()` 在算出 `window_state` 後必須立即以前置拒絕 `window_not_open` 早退，不得對 `observe` 市場繼續做 order book、spot、anchor、波動率等重成本分析
 - `window_not_open` reject detail 至少需帶出 `window_state`、`window_label`、`tau_seconds`、`seconds_to_armed`、`seconds_to_attack`，讓監控頁能正確顯示「已開盤未進尾盤」
-- `ResearchPipeline.run()` 只可把已通過雙邊 depth 驗證的市場放入 `tradable_markets`；若 scanner 已標記深度不可用，不得再以 `price_available` 或 `midpoint_available` 放行
+- `ResearchPipeline.run()` 在第一段只可把通過 status / token / 輕量 quote 檢查的市場放入候選池；經排序與 `filter_live_markets_for_analysis()` 後，才可對剩餘市場補做雙邊 depth 驗證
+- `observe` 市場仍屬有效候選，但完整雙邊 order book 抓取不得發生在 research 入口前；必須等到窗口過濾後，與 `armed / attack` 候選一起進入第二段 depth 驗證
 
 ### 3. 定價與打分層
 

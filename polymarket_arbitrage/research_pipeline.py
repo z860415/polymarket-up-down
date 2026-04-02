@@ -277,6 +277,9 @@ class ResearchPipeline:
         normalized_styles = self._normalize_styles(
             allowed_styles or self.default_styles
         )
+        depth_verified_markets: List[
+            Tuple[ParsedMarket, Dict[str, Any], MarketTradability]
+        ] = []
 
         await self._ensure_scanner_session()
         events = await self.scanner.get_all_events(
@@ -323,7 +326,10 @@ class ResearchPipeline:
                 stats.up_down_count += 1
 
         for parsed, market in parsed_markets:
-            tradability = await self.scanner.check_tradability(market)
+            tradability = await self.scanner.check_tradability(
+                market,
+                verify_depth=False,
+            )
             if not self._should_include_market(
                 parsed=parsed,
                 tradability=tradability,
@@ -354,7 +360,7 @@ class ResearchPipeline:
 
             stats.clob_eligible_count += 1
 
-            if not tradability.is_book_verified:
+            if not (tradability.price_available or tradability.midpoint_available):
                 continue
 
             stats.pricing_verified_count += 1
@@ -373,6 +379,29 @@ class ResearchPipeline:
                 now=analysis_started_at,
             )
         )
+        for parsed, market, tradability in tradable_markets:
+            tradability = await self.scanner.verify_orderbook_depth(tradability)
+            if not tradability.is_book_verified:
+                if tradability.clob_reject is not None:
+                    stats.record_reject(tradability.clob_reject)
+                    reject_summary[tradability.clob_reject.value] = (
+                        reject_summary.get(tradability.clob_reject.value, 0) + 1
+                    )
+                    if len(reject_samples) < 10:
+                        reject_samples.append(
+                            {
+                                "reason": tradability.clob_reject.value,
+                                "market_id": str(market.get("id", "")),
+                                "question": market.get("question", ""),
+                                "asset": parsed.asset,
+                                "style": parsed.style,
+                                "timeframe": parsed.timeframe,
+                            }
+                        )
+                continue
+            depth_verified_markets.append((parsed, market, tradability))
+
+        tradable_markets = depth_verified_markets
         for reject_detail in prefiltered_rejects:
             reject_reason = reject_detail["reason"]
             # 跳過已過期和尚未開盤的市場記錄，只記錄真正有分析價值的拒絕

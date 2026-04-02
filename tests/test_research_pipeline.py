@@ -457,7 +457,7 @@ def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) 
     async def fake_get_all_events(limit: int = 200, allowed_styles=None):
         return [{"id": "event-1", "markets": [market]}]
 
-    async def fake_check_tradability(_: dict):
+    async def fake_check_tradability(_: dict, verify_depth: bool = True):
         return tradability
 
     async def fake_analyze_market(*args, **kwargs):
@@ -546,8 +546,11 @@ def test_run_requires_book_verified_before_analyze(tmp_path, monkeypatch) -> Non
     async def fake_get_all_events(limit: int = 200, allowed_styles=None):
         return [{"id": "event-1", "markets": [market]}]
 
-    async def fake_check_tradability(_: dict):
+    async def fake_check_tradability(_: dict, verify_depth: bool = True):
         return tradability
+
+    async def fake_verify_orderbook_depth(tradability_input):
+        return tradability_input
 
     async def fake_analyze_market(*args, **kwargs):
         analyze_calls["count"] += 1
@@ -563,6 +566,11 @@ def test_run_requires_book_verified_before_analyze(tmp_path, monkeypatch) -> Non
         pipeline.scanner, "parse_market", lambda event, raw_market: (parsed, None, {})
     )
     monkeypatch.setattr(pipeline.scanner, "check_tradability", fake_check_tradability)
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "verify_orderbook_depth",
+        fake_verify_orderbook_depth,
+    )
     monkeypatch.setattr(pipeline, "_analyze_market", fake_analyze_market)
 
     try:
@@ -578,8 +586,141 @@ def test_run_requires_book_verified_before_analyze(tmp_path, monkeypatch) -> Non
         asyncio.run(pipeline.close())
 
     assert analyze_calls["count"] == 0
-    assert result.pricing_verified_count == 0
+    assert result.pricing_verified_count == 1
     assert result.analyzed_market_count == 0
+
+
+def test_run_delays_depth_verification_until_after_filter(tmp_path, monkeypatch) -> None:
+    """第二段深度驗證只應發生在排序與窗口過濾後留下的市場。"""
+    signal_logger = SignalLogger(str(tmp_path / "research.db"))
+    pipeline = ResearchPipeline(signal_logger=signal_logger, max_spread_pct=0.1)
+    verify_calls: list[str] = []
+
+    parsed_keep = ParsedMarket(
+        raw_event={},
+        raw_market={},
+        asset="BTC",
+        style="UP_DOWN",
+        timeframe="5m",
+        strike=None,
+        expiry=datetime.now(timezone.utc) + timedelta(seconds=40),
+        is_crypto=True,
+        is_short_term=True,
+    )
+    parsed_drop = ParsedMarket(
+        raw_event={},
+        raw_market={},
+        asset="ETH",
+        style="UP_DOWN",
+        timeframe="5m",
+        strike=None,
+        expiry=datetime.now(timezone.utc) + timedelta(seconds=50),
+        is_crypto=True,
+        is_short_term=True,
+    )
+    market_keep = {
+        "id": "keep-market",
+        "question": "Bitcoin Up or Down - Keep",
+        "description": "",
+        "feesEnabled": True,
+    }
+    market_drop = {
+        "id": "drop-market",
+        "question": "Ethereum Up or Down - Drop",
+        "description": "",
+        "feesEnabled": True,
+    }
+    base_tradability = lambda market_id, slug, yes_token, no_token: MarketTradability(
+        market_id=market_id,
+        slug=slug,
+        is_active=True,
+        is_closed=False,
+        is_archived=False,
+        status_reject=None,
+        enable_orderbook=True,
+        has_token_ids=True,
+        yes_token=yes_token,
+        no_token=no_token,
+        orderbook_reject=None,
+        price_available=True,
+        midpoint_available=True,
+        book_available=False,
+        clob_reject=None,
+        is_clob_eligible=True,
+        is_book_verified=False,
+        volume=1000.0,
+    )
+
+    async def fake_get_all_events(limit: int = 200, allowed_styles=None):
+        return [{"id": "event-1", "markets": [market_keep, market_drop]}]
+
+    def fake_expand_markets(events, allowed_styles=None):
+        return [(events[0], market_keep), (events[0], market_drop)]
+
+    def fake_parse_market(event, raw_market):
+        if raw_market["id"] == "keep-market":
+            return parsed_keep, None, {}
+        return parsed_drop, None, {}
+
+    async def fake_check_tradability(raw_market: dict, verify_depth: bool = True):
+        if raw_market["id"] == "keep-market":
+            return base_tradability("keep-market", "keep", "yes-keep", "no-keep")
+        return base_tradability("drop-market", "drop", "yes-drop", "no-drop")
+
+    def fake_prioritize(tradable_markets, allowed_styles=None, now=None):
+        return tradable_markets
+
+    def fake_filter(tradable_markets, allowed_styles=None, now=None):
+        kept = [item for item in tradable_markets if item[1]["id"] == "keep-market"]
+        return kept, []
+
+    async def fake_verify_orderbook_depth(tradability_input):
+        verify_calls.append(tradability_input.market_id)
+        tradability_input.book_available = True
+        tradability_input.is_book_verified = True
+        tradability_input.yes_orderbook = {"bids": [], "asks": [{"price": "0.50", "size": "10"}]}
+        tradability_input.no_orderbook = {"bids": [], "asks": [{"price": "0.50", "size": "10"}]}
+        return tradability_input
+
+    async def fake_analyze_market(parsed, market, tradability):
+        return None, "window_not_open", {"reason": "window_not_open", "market_id": tradability.market_id}
+
+    monkeypatch.setattr(pipeline.scanner, "get_all_events", fake_get_all_events)
+    monkeypatch.setattr(pipeline.scanner, "expand_markets", fake_expand_markets)
+    monkeypatch.setattr(pipeline.scanner, "parse_market", fake_parse_market)
+    monkeypatch.setattr(pipeline.scanner, "check_tradability", fake_check_tradability)
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "prioritize_markets_for_analysis",
+        fake_prioritize,
+    )
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "filter_live_markets_for_analysis",
+        fake_filter,
+    )
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "verify_orderbook_depth",
+        fake_verify_orderbook_depth,
+    )
+    monkeypatch.setattr(pipeline, "_analyze_market", fake_analyze_market)
+
+    try:
+        result = asyncio.run(
+            pipeline.run(
+                limit_events=2,
+                allowed_assets=["BTC", "ETH"],
+                allowed_styles=["up_down"],
+                allowed_timeframes=["5m"],
+            )
+        )
+    finally:
+        asyncio.run(pipeline.close())
+
+    assert verify_calls == ["keep-market"]
+    assert result.pricing_verified_count == 2
+    assert result.analyzed_market_count == 1
 
 
 def test_get_market_orderbooks_prefers_tradability_snapshot(tmp_path) -> None:

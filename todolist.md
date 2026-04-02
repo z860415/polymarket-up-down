@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- [x] T127 本輪：將 research 主線的雙邊深度抓取延後到排序與 live 窗口過濾之後，改為兩段式 tradability，避免 `observe` 與非入選市場過早消耗 order book I/O
 - [x] T126 本輪：修正事件深度資料契約，將 tradability 改為 YES/NO 雙邊驗證、研究前置改為以雙邊深度 gate，並重用 scanner 已驗證的 order book 避免重抓不一致
 - [x] T125 本輪：閱讀 `win4r/lossless-claw-enhanced` README，改採持久路徑 `--link` 安裝；補裝 OpenClaw、切換相容的 Node `v22.20.0`、寫入 `lossless-claw` contextEngine 配置並驗證插件可載入
 - [x] T124 本輪：將 claim relayer 認證改為 `RELAYER_API_KEY*` 優先、Builder fallback，補齊文件與測試，並在真實 submit 驗證已切到 relayer header；服務端仍回 `401 Unauthorized`
