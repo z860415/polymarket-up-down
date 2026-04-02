@@ -1034,7 +1034,12 @@ class LiveExecutor:
             amount = size_override or 0.0
             expected_price = price_override or 0.0
             edge = edge_override or 0.0
+            lifecycle_logger.info(
+                "[DEBUG] execute_trade 尾盤模式 | side=%s | amount=%.4f | price=%.4f",
+                side, amount, expected_price
+            )
             if not side or expected_price <= 0 or amount <= 0:
+                lifecycle_logger.warning("[DEBUG] 尾盤參數不完整 | side=%s | price=%.4f | amount=%.4f", side, expected_price, amount)
                 return LiveExecutionResult(
                     order_id="",
                     market_id=market_def.market_id,
@@ -1124,9 +1129,14 @@ class LiveExecutor:
         # 向下取整到整數 shares
         shares = int(shares)
         
+        lifecycle_logger.info(
+            "[DEBUG] shares 計算 | amount=%.4f | price=%.4f | shares=%d",
+            amount, expected_price, shares
+        )
+        
         # Polymarket API 要求最少 5 shares
         if shares < 5:
-            logger.warning(f"Order too small: {shares} shares (< 5 min)")
+            lifecycle_logger.warning(f"[DEBUG] Order too small: {shares} shares (< 5 min)")
             return LiveExecutionResult(
                 order_id="",
                 market_id=market_def.market_id,
@@ -1141,6 +1151,8 @@ class LiveExecutor:
                 created_at=datetime.now(timezone.utc),
                 error_message=f"Order too small: {shares} shares (min 5)",
             )
+        
+        lifecycle_logger.info("[DEBUG] shares 檢查通過 | shares=%d", shares)
         
         actual_amount = shares * expected_price  # 實際花費
         reference_ask = yes_ask if side == "YES" else no_ask
