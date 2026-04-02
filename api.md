@@ -135,6 +135,11 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - 先根據選定方向的 ask 檔位估算固定 notional 的加權平均成交價
   - 再以該有效成交價相對最佳 ask 的偏離，作為 `spread_pct` / friction 門檻
   - 不再用 YES / NO 雙邊最大相對 spread 直接淘汰整個市場
+- `UP_DOWN` tail 候選的正式 `selected_edge` 需改為 maker 視角：
+  - `gross_edge_up_maker = p_up - yes_bid`
+  - `gross_edge_down_maker = p_down - no_bid`
+  - `selected_side` 與候選排序預設以 maker 淨 edge 為準
+- `UP_DOWN` 若需保留 taker 診斷值，需另外輸出 taker 視角欄位，不得再把 taker edge 直接覆寫成候選主排序值
 - `UP_DOWN` 研究層的拒絕順序需固定：
   - `timeframe_missing`
   - `missing_token_ids`
@@ -155,6 +160,18 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - `tau_seconds`
   - `seconds_to_armed`
   - `seconds_to_attack`
+- `UP_DOWN` fee 模型需對齊官方：
+  - maker fee = `0`
+  - taker fee 使用 `fee = C * feeRate * p * (1-p)`
+  - 研究層若以相對名義金額表示 taker fee cost，可換算為 `fee_rate * (1 - execution_price)`
+  - 對 crypto 市場，`feesEnabled=true` 時的預設 `feeRate` 為 `0.072`
+- `ResearchOpportunity` / `TailStrategyEstimate` 至少需補出：
+  - `selected_execution_mode`
+  - `maker_net_edge_up`
+  - `maker_net_edge_down`
+  - `taker_net_edge_up`
+  - `taker_net_edge_down`
+- 執行層 `_select_tail_order_price()` 不得再單靠 timeframe 推導 maker / taker；應優先尊重 research 產出的 `selected_execution_mode`
 - 研究門檻基線：
   - `15m`：`minimum_lead_z=1.5`、`minimum_net_edge=0.04`
   - `4h`：`minimum_lead_z=1.4`、`minimum_net_edge=0.03`

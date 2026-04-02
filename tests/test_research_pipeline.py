@@ -131,7 +131,7 @@ def test_estimate_effective_buy_price_returns_none_when_depth_insufficient(
 
 
 def test_updown_pricer_applies_one_sided_execution_costs() -> None:
-    """尾盤定價器需按 YES / NO 各自成本計算淨 edge。"""
+    """尾盤定價器需分離 maker / taker 成本，並以 maker edge 作為主候選。"""
     pricer = UpDownTailPricer()
     snapshot = MarketRuntimeSnapshot(
         market_id="m1",
@@ -148,6 +148,7 @@ def test_updown_pricer_applies_one_sided_execution_costs() -> None:
         best_depth=600.0,
         fees_enabled=True,
         window_state="attack",
+        taker_fee_rate=0.072,
     )
 
     estimate = pricer.estimate(
@@ -158,17 +159,44 @@ def test_updown_pricer_applies_one_sided_execution_costs() -> None:
 
     assert estimate.slippage_cost_up < estimate.slippage_cost_down
     assert estimate.selected_side == "YES"
-    assert estimate.slippage_cost == estimate.slippage_cost_up
+    assert estimate.selected_execution_mode == "maker"
+    assert estimate.maker_net_edge_up > estimate.taker_net_edge_up
+    assert estimate.net_edge_up == estimate.maker_net_edge_up
+
+
+def test_updown_pricer_uses_official_taker_fee_formula() -> None:
+    """taker fee 應按官方 feeRate * (1 - price) 換算相對成本。"""
+    pricer = UpDownTailPricer()
+    snapshot = MarketRuntimeSnapshot(
+        market_id="m-fee",
+        asset="BTC",
+        timeframe="15m",
+        anchor_price=100.0,
+        spot_price=100.0,
+        tau_seconds=60.0,
+        sigma_tail=0.5,
+        yes_bid=0.49,
+        yes_ask=0.50,
+        no_bid=0.49,
+        no_ask=0.50,
+        best_depth=600.0,
+        fees_enabled=True,
+        window_state="attack",
+        taker_fee_rate=0.072,
+    )
+
+    assert pricer._estimate_taker_fee_cost(snapshot, 0.50) == pytest.approx(0.036)
+    assert pricer._estimate_taker_fee_cost(snapshot, 0.80) == pytest.approx(0.0144)
 
 
 def test_updown_pricer_uses_relaxed_15m_and_4h_thresholds() -> None:
     """15m 與 4h 應使用本輪放寬後的研究門檻。"""
     pricer = UpDownTailPricer()
 
-    assert pricer.minimum_lead_z("15m") == pytest.approx(1.5)
-    assert pricer.minimum_lead_z("4h") == pytest.approx(1.4)
-    assert pricer.minimum_net_edge("15m") == pytest.approx(0.04)
-    assert pricer.minimum_net_edge("4h") == pytest.approx(0.03)
+    assert pricer.minimum_lead_z("15m") == pytest.approx(0.8)
+    assert pricer.minimum_lead_z("4h") == pytest.approx(1.2)
+    assert pricer.minimum_net_edge("15m") == pytest.approx(0.05)
+    assert pricer.minimum_net_edge("4h") == pytest.approx(0.04)
 
 
 def test_analyze_up_down_market_uses_selected_side_effective_cost(
@@ -251,13 +279,14 @@ def test_analyze_up_down_market_uses_selected_side_effective_cost(
     assert reject_detail is None
     assert candidate is not None
     assert candidate.opportunity.selected_side == "YES"
-    assert candidate.opportunity.spread_pct == pytest.approx(0.0, abs=1e-9)
+    assert candidate.opportunity.selected_execution_mode == "maker"
+    assert candidate.opportunity.spread_pct == pytest.approx(0.02, abs=1e-9)
 
 
-def test_analyze_up_down_market_rejects_when_both_sides_lack_effective_ask(
+def test_analyze_up_down_market_rejects_when_both_sides_lack_bid_quotes(
     tmp_path, monkeypatch
 ) -> None:
-    """若兩邊都沒有足夠 ask 深度，UP_DOWN 應在早期直接拒絕。"""
+    """若兩邊都沒有 maker bid，UP_DOWN 應在早期直接拒絕。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))
     pipeline = ResearchPipeline(signal_logger=signal_logger, max_spread_pct=0.1)
 
@@ -301,7 +330,7 @@ def test_analyze_up_down_market_rejects_when_both_sides_lack_effective_ask(
 
     async def fake_fetch_orderbook(_: str):
         return {
-            "bids": [{"price": "0.49", "size": "10"}],
+            "bids": [],
             "asks": [{"price": "0.50", "size": "1"}],
         }
 
@@ -312,7 +341,7 @@ def test_analyze_up_down_market_rejects_when_both_sides_lack_effective_ask(
     )
 
     assert candidate is None
-    assert reject_reason == "ask_quote_missing"
+    assert reject_reason == "bid_quote_missing"
     assert reject_detail["effective_cost_notional_usdc"] == pytest.approx(1.0)
 
 
@@ -824,9 +853,8 @@ def test_run_includes_prefiltered_rejects_in_samples(tmp_path, monkeypatch) -> N
     finally:
         asyncio.run(pipeline.close())
 
-    assert result.reject_summary["market_not_open_yet"] == 1
-    assert len(result.reject_samples) == 1
-    assert result.reject_samples[0]["reason"] == "market_not_open_yet"
+    assert "market_not_open_yet" not in result.reject_summary
+    assert result.reject_samples == []
 
 
 def test_run_passes_normalized_styles_to_discovery(tmp_path, monkeypatch) -> None:

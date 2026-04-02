@@ -128,6 +128,13 @@
 - `window_not_open` reject detail 至少需帶出 `window_state`、`window_label`、`tau_seconds`、`seconds_to_armed`、`seconds_to_attack`，讓監控頁能正確顯示「已開盤未進尾盤」
 - `ResearchPipeline.run()` 在第一段只可把通過 status / token / 輕量 quote 檢查的市場放入候選池；經排序與 `filter_live_markets_for_analysis()` 後，才可對剩餘市場補做雙邊 depth 驗證
 - `observe` 市場仍屬有效候選，但完整雙邊 order book 抓取不得發生在 research 入口前；必須等到窗口過濾後，與 `armed / attack` 候選一起進入第二段 depth 驗證
+- `UP / DOWN` 尾盤正式候選需改為 maker 語義：研究排序與 `selected_edge` 應以選定方向 `best_bid` 的 maker 進場價計算，不得再用 `best_ask` 的 taker 視角決定 tail 候選
+- maker 與 taker 成本模型需分離：
+  - maker：預設 `fee_cost=0`，不計 taker slippage，但需保留成交風險 / adverse selection 類型的 `fill_penalty`
+  - taker：費率需遵循 Polymarket 官方公式 `fee = C * feeRate * p * (1-p)`，不得再用固定 `0.008`
+- v1 `UP_DOWN` 只交易 crypto 類市場；若 `feesEnabled=true` 且未提供更精確費率欄位，研究層可用 crypto 類別官方 taker `feeRate=0.072` 作為保守預設
+- `TailStrategyEstimate` 需同時保留 maker / taker 的 side-level edge 與最終 `selected_execution_mode`，供監控、研究拒絕與執行層重用
+- `UP_DOWN` 尾盤執行層需優先遵循 research 產出的 `selected_execution_mode`；若本輪策略切為 maker 正確版，tail 候選不得在執行層再私自升級為 taker
 
 ### 3. 定價與打分層
 

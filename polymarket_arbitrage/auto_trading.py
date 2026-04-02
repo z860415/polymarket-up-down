@@ -163,13 +163,14 @@ class AutoTradingPipeline:
 
             for candidate in selected_candidates:
                 candidate_logger.info(
-                    "候選機會 | market=%s | asset=%s | side=%s | edge=%.4f | timeframe=%s | window_state=%s",
+                    "候選機會 | market=%s | asset=%s | side=%s | edge=%.4f | timeframe=%s | window_state=%s | execution_mode=%s",
                     candidate.opportunity.market_id,
                     candidate.opportunity.asset,
                     candidate.opportunity.selected_side,
                     candidate.opportunity.selected_edge,
                     candidate.opportunity.timeframe,
                     candidate.selected_window_state,
+                    candidate.selected_execution_mode,
                 )
                 try:
                     execution = await asyncio.to_thread(

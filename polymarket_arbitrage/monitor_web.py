@@ -55,6 +55,7 @@ _LOG_TIMESTAMP_PATTERN = re.compile(r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{
     "style_not_supported": "型別不支援",
     "missing_token_ids": "缺少代幣ID",
     "orderbook_unavailable": "無法取得深度",
+    "bid_quote_missing": "缺少買盤報價",
     "ask_quote_missing": "缺少報價",
     "spread_too_wide": "價差過寬",
     "volume_too_low": "成交量低",

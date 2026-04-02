@@ -589,7 +589,7 @@ def test_should_execute_existing_position(sample_market_def, sample_fair_prob, m
 
 
 def test_select_tail_order_price_short_term_attack_uses_taker(mock_signal_logger):
-    """測試 5m attack 且 edge 足夠時使用 taker 價格。"""
+    """測試 research 顯式選定 taker 時，執行層應尊重該模式。"""
     executor = LiveExecutor(mock_signal_logger, LiveRiskConfig())
     candidate = Mock()
     candidate.opportunity = Mock(
@@ -634,6 +634,7 @@ def test_select_tail_order_price_short_term_attack_uses_taker(mock_signal_logger
         selected_net_edge=0.20,
         window_state="attack",
         confidence_score=0.9,
+        selected_execution_mode="taker",
     )
 
     assert executor._select_tail_order_price(candidate) == 0.14
@@ -685,6 +686,7 @@ def test_select_tail_order_price_long_term_prefers_maker(mock_signal_logger):
         selected_net_edge=0.113,
         window_state="attack",
         confidence_score=0.85,
+        selected_execution_mode="maker",
     )
 
     assert executor._select_tail_order_price(candidate) == 0.66
@@ -787,7 +789,7 @@ def test_execute_tail_candidate_refreshes_orderbook_before_submit(mock_signal_lo
     executor.execute_trade.assert_called_once()
     _, kwargs = executor.execute_trade.call_args
     assert kwargs["yes_ask"] == 0.24
-    assert kwargs["price_override"] == 0.24
+    assert kwargs["price_override"] == 0.21
 
 
 @patch("polymarket_arbitrage.live_executor.ClobClient")

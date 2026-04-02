@@ -1441,6 +1441,14 @@ class LiveExecutor:
         if snapshot.window_state == "observe":
             return maker_price
 
+        selected_execution_mode = getattr(
+            estimate, "selected_execution_mode", None
+        ) or getattr(opportunity, "selected_execution_mode", None)
+        if selected_execution_mode == "maker":
+            return maker_price or taker_price
+        if selected_execution_mode == "taker":
+            return taker_price or maker_price
+
         timeframe = opportunity.timeframe or ""
         if timeframe in {"5m", "15m"}:
             required_edge = self._tail_pricer.minimum_net_edge(timeframe) * 2

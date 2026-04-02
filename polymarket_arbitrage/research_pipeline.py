@@ -80,6 +80,7 @@ class ResearchOpportunity:
     yes_token_id: str
     no_token_id: str
     observation_id: str
+    selected_execution_mode: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,13 @@ class TradingCandidate:
         if self.runtime_snapshot is not None:
             return self.runtime_snapshot.window_state
         return self.opportunity.window_state
+
+    @property
+    def selected_execution_mode(self) -> Optional[str]:
+        """取得研究層選定的執行模式。"""
+        if self.tail_estimate is not None:
+            return self.tail_estimate.selected_execution_mode
+        return self.opportunity.selected_execution_mode
 
 
 @dataclass(frozen=True)
@@ -772,9 +780,9 @@ class ResearchPipeline:
         no_execution_cost_pct = self._calculate_execution_cost_pct(
             no_ask, no_effective_ask
         )
-        if yes_effective_ask is None and no_effective_ask is None:
+        if yes_bid is None and no_bid is None:
             return self._build_reject(
-                "ask_quote_missing",
+                "bid_quote_missing",
                 parsed,
                 market,
                 detail={
@@ -848,34 +856,31 @@ class ResearchPipeline:
             best_depth=self._estimate_best_depth(yes_orderbook, no_orderbook),
             fees_enabled=market_definition.fee_enabled,
             window_state=window_state,
+            taker_fee_rate=self._estimate_market_taker_fee_rate(parsed, market),
         )
         tail_estimate = self.tail_pricer.estimate(
             runtime_snapshot,
             yes_execution_cost_pct=yes_execution_cost_pct,
             no_execution_cost_pct=no_execution_cost_pct,
         )
-        spread_pct = (
-            yes_execution_cost_pct
-            if tail_estimate.selected_side == "YES"
-            else no_execution_cost_pct
+        spread_pct = self._calculate_selected_side_spread_pct(
+            selected_side=tail_estimate.selected_side,
+            selected_execution_mode=tail_estimate.selected_execution_mode,
+            yes_bid=yes_bid,
+            yes_ask=yes_ask,
+            no_bid=no_bid,
+            no_ask=no_ask,
+            yes_execution_cost_pct=yes_execution_cost_pct,
+            no_execution_cost_pct=no_execution_cost_pct,
         )
-        if spread_pct is None:
-            return self._build_reject(
-                "ask_quote_missing",
-                parsed,
-                market,
-                detail={
-                    "selected_side": tail_estimate.selected_side,
-                    "effective_cost_notional_usdc": self.effective_cost_notional_usdc,
-                },
-            )
-        if spread_pct > self.max_spread_pct:
+        if spread_pct is not None and spread_pct > self.max_spread_pct:
             return self._build_reject(
                 "spread_too_wide",
                 parsed,
                 market,
                 detail={
                     "selected_side": tail_estimate.selected_side,
+                    "selected_execution_mode": tail_estimate.selected_execution_mode,
                     "spread_pct": spread_pct,
                     "yes_execution_cost_pct": yes_execution_cost_pct,
                     "no_execution_cost_pct": no_execution_cost_pct,
@@ -909,6 +914,7 @@ class ResearchPipeline:
                     "selected_edge": tail_estimate.selected_net_edge,
                     "min_edge_threshold": min_edge,
                     "window_state": window_state,
+                    "selected_execution_mode": tail_estimate.selected_execution_mode,
                 },
             )
         # 選項 1: 兩邊都負時拒絕交易 (selected_net_edge < 0 表示兩邊都是負 edge)
@@ -921,7 +927,12 @@ class ResearchPipeline:
                     "selected_edge": tail_estimate.selected_net_edge,
                     "net_edge_up": tail_estimate.net_edge_up,
                     "net_edge_down": tail_estimate.net_edge_down,
+                    "maker_net_edge_up": tail_estimate.maker_net_edge_up,
+                    "maker_net_edge_down": tail_estimate.maker_net_edge_down,
+                    "taker_net_edge_up": tail_estimate.taker_net_edge_up,
+                    "taker_net_edge_down": tail_estimate.taker_net_edge_down,
                     "window_state": window_state,
+                    "selected_execution_mode": tail_estimate.selected_execution_mode,
                 },
             )
         if tail_estimate.confidence_score < self.min_confidence_score:
@@ -992,6 +1003,7 @@ class ResearchPipeline:
             yes_token_id=tradability.yes_token,
             no_token_id=tradability.no_token,
             observation_id=observation.observation_id,
+            selected_execution_mode=tail_estimate.selected_execution_mode,
         )
         return (
             TradingCandidate(
@@ -1290,6 +1302,85 @@ class ResearchPipeline:
             return None
         return max(effective_ask - best_ask, 0.0) / effective_ask
 
+    def _calculate_selected_side_spread_pct(
+        self,
+        selected_side: str,
+        selected_execution_mode: Optional[str],
+        yes_bid: Optional[float],
+        yes_ask: Optional[float],
+        no_bid: Optional[float],
+        no_ask: Optional[float],
+        yes_execution_cost_pct: Optional[float],
+        no_execution_cost_pct: Optional[float],
+    ) -> Optional[float]:
+        """依選定方向與執行模式計算對應的 friction 比率。"""
+        if selected_execution_mode == "taker":
+            return (
+                yes_execution_cost_pct
+                if selected_side == "YES"
+                else no_execution_cost_pct
+            )
+
+        if selected_side == "YES":
+            return self._calculate_quote_spread_pct(yes_bid, yes_ask)
+        return self._calculate_quote_spread_pct(no_bid, no_ask)
+
+    def _calculate_quote_spread_pct(
+        self,
+        best_bid: Optional[float],
+        best_ask: Optional[float],
+    ) -> Optional[float]:
+        """計算單邊最佳 bid/ask 的相對 spread。"""
+        if best_bid is None or best_ask is None or best_ask <= 0:
+            return None
+        return max(best_ask - best_bid, 0.0) / best_ask
+
+    def _estimate_market_taker_fee_rate(
+        self,
+        parsed: ParsedMarket,
+        market: Dict[str, Any],
+    ) -> float:
+        """估算市場 taker 費率，優先使用市場欄位，否則回退至 crypto 預設。"""
+        if not bool(market.get("feesEnabled", True)):
+            return 0.0
+
+        ratio_keys = (
+            "takerFeeRate",
+            "taker_fee_rate",
+            "feeRate",
+            "fee_rate",
+        )
+        for key in ratio_keys:
+            raw_value = market.get(key)
+            if raw_value in (None, ""):
+                continue
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if value > 1:
+                value /= 10000.0
+            return max(value, 0.0)
+
+        bps_keys = (
+            "takerFeeRateBps",
+            "feeRateBps",
+            "base_fee",
+            "baseFee",
+        )
+        for key in bps_keys:
+            raw_value = market.get(key)
+            if raw_value in (None, ""):
+                continue
+            try:
+                return max(float(raw_value) / 10000.0, 0.0)
+            except (TypeError, ValueError):
+                continue
+
+        if parsed.is_crypto:
+            return 0.072
+        return 0.0
+
     def _normalize_timeframes(
         self, allowed_timeframes: Optional[List[str]]
     ) -> Optional[set[str]]:
@@ -1494,6 +1585,7 @@ class ResearchPipeline:
                 "market_style": "UP_DOWN",
                 "timeframe": snapshot.timeframe,
                 "window_state": snapshot.window_state,
+                "selected_execution_mode": estimate.selected_execution_mode,
                 "fee_cost": estimate.fee_cost,
                 "slippage_cost": estimate.slippage_cost,
                 "slippage_cost_up": estimate.slippage_cost_up,
@@ -1501,6 +1593,10 @@ class ResearchPipeline:
                 "fill_penalty": estimate.fill_penalty,
                 "net_edge_up": estimate.net_edge_up,
                 "net_edge_down": estimate.net_edge_down,
+                "maker_net_edge_up": estimate.maker_net_edge_up,
+                "maker_net_edge_down": estimate.maker_net_edge_down,
+                "taker_net_edge_up": estimate.taker_net_edge_up,
+                "taker_net_edge_down": estimate.taker_net_edge_down,
             },
             model_confidence_score=estimate.confidence_score,
             input_quality_score=0.95,

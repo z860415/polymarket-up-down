@@ -122,6 +122,7 @@ class MarketRuntimeSnapshot:
     best_depth: float
     fees_enabled: bool
     window_state: str
+    taker_fee_rate: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,11 @@ class TailStrategyEstimate:
     selected_net_edge: float
     window_state: str
     confidence_score: float
+    maker_net_edge_up: float = 0.0
+    maker_net_edge_down: float = 0.0
+    taker_net_edge_up: float = 0.0
+    taker_net_edge_down: float = 0.0
+    selected_execution_mode: str = "maker"
 
 
 class UpDownTailPricer:
@@ -188,24 +194,38 @@ class UpDownTailPricer:
             p_up = NormalDist().cdf(lead_z)
         p_down = 1.0 - p_up
 
-        gross_edge_up = p_up - (snapshot.yes_ask or 1.0)
-        gross_edge_down = p_down - (snapshot.no_ask or 1.0)
-        fee_cost = self._estimate_fee_cost(snapshot)
+        gross_edge_up = p_up - (snapshot.yes_bid or 1.0)
+        gross_edge_down = p_down - (snapshot.no_bid or 1.0)
+        maker_fill_penalty = self._estimate_fill_penalty(snapshot)
+        maker_net_edge_up = gross_edge_up - maker_fill_penalty
+        maker_net_edge_down = gross_edge_down - maker_fill_penalty
+
+        taker_gross_edge_up = p_up - (snapshot.yes_ask or 1.0)
+        taker_gross_edge_down = p_down - (snapshot.no_ask or 1.0)
+        taker_fee_cost_up = self._estimate_taker_fee_cost(snapshot, snapshot.yes_ask)
+        taker_fee_cost_down = self._estimate_taker_fee_cost(snapshot, snapshot.no_ask)
         slippage_cost_up = self._estimate_slippage_cost(yes_execution_cost_pct)
         slippage_cost_down = self._estimate_slippage_cost(no_execution_cost_pct)
-        fill_penalty = self._estimate_fill_penalty(snapshot)
+        taker_net_edge_up = (
+            taker_gross_edge_up - taker_fee_cost_up - slippage_cost_up
+        )
+        taker_net_edge_down = (
+            taker_gross_edge_down - taker_fee_cost_down - slippage_cost_down
+        )
 
-        net_edge_up = gross_edge_up - fee_cost - slippage_cost_up - fill_penalty
-        net_edge_down = gross_edge_down - fee_cost - slippage_cost_down - fill_penalty
-
-        if net_edge_up >= net_edge_down:
+        if maker_net_edge_up >= maker_net_edge_down:
             selected_side = "YES"
-            selected_net_edge = net_edge_up
-            slippage_cost = slippage_cost_up
+            selected_net_edge = maker_net_edge_up
+            fee_cost = 0.0
+            slippage_cost = 0.0
         else:
             selected_side = "NO"
-            selected_net_edge = net_edge_down
-            slippage_cost = slippage_cost_down
+            selected_net_edge = maker_net_edge_down
+            fee_cost = 0.0
+            slippage_cost = 0.0
+
+        selected_execution_mode = "maker"
+        fill_penalty = maker_fill_penalty
 
         confidence_score = max(min((abs(lead_z) / 3.0), 1.0), 0.35)
 
@@ -220,12 +240,17 @@ class UpDownTailPricer:
             slippage_cost_down=slippage_cost_down,
             slippage_cost=slippage_cost,
             fill_penalty=fill_penalty,
-            net_edge_up=net_edge_up,
-            net_edge_down=net_edge_down,
+            net_edge_up=maker_net_edge_up,
+            net_edge_down=maker_net_edge_down,
             selected_side=selected_side,
             selected_net_edge=selected_net_edge,
             window_state=snapshot.window_state,
             confidence_score=confidence_score,
+            maker_net_edge_up=maker_net_edge_up,
+            maker_net_edge_down=maker_net_edge_down,
+            taker_net_edge_up=taker_net_edge_up,
+            taker_net_edge_down=taker_net_edge_down,
+            selected_execution_mode=selected_execution_mode,
         )
 
     def minimum_net_edge(self, timeframe: str, window_state: str = "armed") -> float:
@@ -266,13 +291,21 @@ class UpDownTailPricer:
         # Use abs() to allow both positive (long) and negative (short) edges
         return abs(net_edge) >= min_edge
 
-    def _estimate_fee_cost(self, snapshot: MarketRuntimeSnapshot) -> float:
-        """估算成本中的手續費部分。"""
-        if not snapshot.fees_enabled:
+    def _estimate_taker_fee_cost(
+        self,
+        snapshot: MarketRuntimeSnapshot,
+        execution_price: Optional[float],
+    ) -> float:
+        """依 Polymarket 官方公式估算 taker 相對成本。"""
+        if (
+            not snapshot.fees_enabled
+            or execution_price is None
+            or execution_price <= 0
+            or snapshot.taker_fee_rate <= 0
+        ):
             return 0.0
-        if snapshot.timeframe in {"1m", "5m", "15m"}:
-            return 0.008
-        return 0.004
+        normalized_price = min(max(execution_price, 0.0), 1.0)
+        return snapshot.taker_fee_rate * (1.0 - normalized_price)
 
     def _estimate_slippage_cost(self, spread_pct: Optional[float]) -> float:
         """估算滑價成本。"""
