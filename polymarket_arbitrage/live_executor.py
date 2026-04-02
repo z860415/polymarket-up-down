@@ -964,9 +964,19 @@ class LiveExecutor:
             yes_ask=yes_ask,
             account=account,
         )
+        
+        # 確保能買到至少 5 shares (Polymarket API 要求)
+        min_shares = 5
+        min_amount_for_shares = min_shares * expected_price
+        size = max(size, min_amount_for_shares)
+        lifecycle_logger.info(
+            "[DEBUG] 倉位調整 | original=%.4f | min_for_5_shares=%.4f | final=%.4f | price=%.4f",
+            self.calculate_position_size(edge=edge, confidence=fair_prob.model_confidence_score, yes_ask=yes_ask, account=account),
+            min_amount_for_shares, size, expected_price
+        )
 
         if size < self.risk.min_position_per_trade:
-            return False, f"Calculated size too small: {size:.2f}", None
+            return False, f"Calculated size too small: {size:.2f} (min_position={self.risk.min_position_per_trade})", None
 
         # 5. 風控限制檢查
         passed, reason = self.check_risk_limits(account, size)
