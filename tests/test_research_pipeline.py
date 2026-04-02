@@ -499,6 +499,127 @@ def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) 
     assert len(result.reject_samples) == 1
 
 
+def test_run_requires_book_verified_before_analyze(tmp_path, monkeypatch) -> None:
+    """研究主線不得再讓只有 price / midpoint、但缺少雙邊深度的市場進分析。"""
+    signal_logger = SignalLogger(str(tmp_path / "research.db"))
+    pipeline = ResearchPipeline(signal_logger=signal_logger, max_spread_pct=0.1)
+    analyze_calls = {"count": 0}
+
+    parsed = ParsedMarket(
+        raw_event={},
+        raw_market={},
+        asset="BTC",
+        style="UP_DOWN",
+        timeframe="5m",
+        strike=None,
+        expiry=datetime.now(timezone.utc) + timedelta(seconds=40),
+        is_crypto=True,
+        is_short_term=True,
+    )
+    market = {
+        "id": "m-book-gate",
+        "question": "Bitcoin Up or Down - Need Book",
+        "description": "",
+        "feesEnabled": True,
+    }
+    tradability = MarketTradability(
+        market_id="m-book-gate",
+        slug="btc-up-down-no-book",
+        is_active=True,
+        is_closed=False,
+        is_archived=False,
+        status_reject=None,
+        enable_orderbook=True,
+        has_token_ids=True,
+        yes_token="yes-token",
+        no_token="no-token",
+        orderbook_reject=None,
+        price_available=True,
+        midpoint_available=True,
+        book_available=False,
+        clob_reject=None,
+        is_clob_eligible=True,
+        is_book_verified=False,
+        volume=1000.0,
+    )
+
+    async def fake_get_all_events(limit: int = 200, allowed_styles=None):
+        return [{"id": "event-1", "markets": [market]}]
+
+    async def fake_check_tradability(_: dict):
+        return tradability
+
+    async def fake_analyze_market(*args, **kwargs):
+        analyze_calls["count"] += 1
+        return None, "unexpected", {"reason": "unexpected"}
+
+    monkeypatch.setattr(pipeline.scanner, "get_all_events", fake_get_all_events)
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "expand_markets",
+        lambda events, allowed_styles=None: [(events[0], market)],
+    )
+    monkeypatch.setattr(
+        pipeline.scanner, "parse_market", lambda event, raw_market: (parsed, None, {})
+    )
+    monkeypatch.setattr(pipeline.scanner, "check_tradability", fake_check_tradability)
+    monkeypatch.setattr(pipeline, "_analyze_market", fake_analyze_market)
+
+    try:
+        result = asyncio.run(
+            pipeline.run(
+                limit_events=1,
+                allowed_assets=["BTC"],
+                allowed_styles=["up_down"],
+                allowed_timeframes=["5m"],
+            )
+        )
+    finally:
+        asyncio.run(pipeline.close())
+
+    assert analyze_calls["count"] == 0
+    assert result.pricing_verified_count == 0
+    assert result.analyzed_market_count == 0
+
+
+def test_get_market_orderbooks_prefers_tradability_snapshot(tmp_path) -> None:
+    """research 應優先重用 scanner 已驗證的雙邊深度快照。"""
+    signal_logger = SignalLogger(str(tmp_path / "research.db"))
+    pipeline = ResearchPipeline(signal_logger=signal_logger)
+    tradability = MarketTradability(
+        market_id="m-snapshot",
+        slug="snapshot-market",
+        is_active=True,
+        is_closed=False,
+        is_archived=False,
+        status_reject=None,
+        enable_orderbook=True,
+        has_token_ids=True,
+        yes_token="yes-token",
+        no_token="no-token",
+        orderbook_reject=None,
+        price_available=True,
+        midpoint_available=True,
+        book_available=True,
+        clob_reject=None,
+        is_clob_eligible=True,
+        is_book_verified=True,
+        volume=100.0,
+        yes_orderbook={"bids": [{"price": "0.48", "size": "5"}], "asks": []},
+        no_orderbook={"bids": [{"price": "0.52", "size": "5"}], "asks": []},
+    )
+
+    async def fail_fetch(_: str):
+        raise AssertionError("不應在已有快照時重抓 order book")
+
+    pipeline._fetch_orderbook = fail_fetch  # type: ignore[method-assign]
+
+    yes_orderbook, no_orderbook = asyncio.run(pipeline._get_market_orderbooks(tradability))
+
+    assert yes_orderbook == tradability.yes_orderbook
+    assert no_orderbook == tradability.no_orderbook
+
+
 def test_run_includes_prefiltered_rejects_in_samples(tmp_path, monkeypatch) -> None:
     """前置過濾拒絕樣本也應進入 reject_samples，供監控頁顯示。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))

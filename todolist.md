@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- [x] T126 本輪：修正事件深度資料契約，將 tradability 改為 YES/NO 雙邊驗證、研究前置改為以雙邊深度 gate，並重用 scanner 已驗證的 order book 避免重抓不一致
 - [x] T125 本輪：閱讀 `win4r/lossless-claw-enhanced` README，改採持久路徑 `--link` 安裝；補裝 OpenClaw、切換相容的 Node `v22.20.0`、寫入 `lossless-claw` contextEngine 配置並驗證插件可載入
 - [x] T124 本輪：將 claim relayer 認證改為 `RELAYER_API_KEY*` 優先、Builder fallback，補齊文件與測試，並在真實 submit 驗證已切到 relayer header；服務端仍回 `401 Unauthorized`
 - [x] T123 本輪：嘗試對當前 redeemable positions 正式執行 claim submission；preflight 通過，但實際提交被 relayer `401 Unauthorized` 阻塞

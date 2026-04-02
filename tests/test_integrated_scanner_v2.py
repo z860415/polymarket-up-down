@@ -314,6 +314,63 @@ def test_check_book_endpoint_uses_token_query_param() -> None:
     assert scanner.session.last_timeout == 5
 
 
+def test_check_tradability_requires_both_token_ids() -> None:
+    """tradability 不得因單邊 token 存在就視為可交易。"""
+    scanner = PolymarketScannerV2(api_key="test")
+    market = {
+        "conditionId": "m-single",
+        "slug": "single-sided-market",
+        "active": True,
+        "closed": False,
+        "archived": False,
+        "enableOrderBook": True,
+        "clobTokenIds": '["yes-only"]',
+        "volume": 12,
+    }
+
+    tradability = asyncio.run(scanner.check_tradability(market))
+
+    assert tradability.has_token_ids is False
+    assert tradability.orderbook_reject == RejectReason.MISSING_CLOB_TOKEN_IDS
+    assert tradability.is_clob_eligible is False
+
+
+def test_check_tradability_requires_dual_orderbooks() -> None:
+    """tradability 需同時驗證 YES / NO 雙邊深度。"""
+    scanner = PolymarketScannerV2(api_key="test")
+    market = {
+        "conditionId": "m-depth",
+        "slug": "dual-depth-market",
+        "active": True,
+        "closed": False,
+        "archived": False,
+        "enableOrderBook": True,
+        "clobTokenIds": '["yes-token","no-token"]',
+        "volume": 25,
+    }
+
+    async def fake_check_endpoint(_: str) -> bool:
+        return True
+
+    async def fake_fetch_orderbook(token_id: str):
+        if token_id == "yes-token":
+            return {"bids": [{"price": "0.45", "size": "10"}], "asks": []}
+        return None
+
+    scanner._check_price_endpoint = fake_check_endpoint  # type: ignore[method-assign]
+    scanner._check_midpoint_endpoint = fake_check_endpoint  # type: ignore[method-assign]
+    scanner._fetch_orderbook = fake_fetch_orderbook  # type: ignore[method-assign]
+
+    tradability = asyncio.run(scanner.check_tradability(market))
+
+    assert tradability.has_token_ids is True
+    assert tradability.price_available is True
+    assert tradability.midpoint_available is True
+    assert tradability.book_available is False
+    assert tradability.clob_reject == RejectReason.BOOK_NOT_FOUND
+    assert tradability.is_book_verified is False
+
+
 def test_prioritize_markets_for_analysis_prefers_near_expiry_for_up_down() -> None:
     """UP_DOWN 本地重排應先看近到期，再看成交量。"""
     scanner = PolymarketScannerV2(api_key="test")

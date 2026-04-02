@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
 import aiohttp
+from py_clob_client.client import ClobClient
 
 from .market_definition import (
     MarketDefinition,
@@ -150,10 +151,12 @@ class MarketTradability:
 
     # 綜合評估
     is_clob_eligible: bool  # Status OK + enableOrderBook + has tokens
-    is_book_verified: bool  # CLOB-eligible + pricing API OK
+    is_book_verified: bool  # CLOB-eligible + YES/NO 雙邊深度驗證通過
 
     # 活躍度代理
     volume: float
+    yes_orderbook: Optional[Dict[str, Any]] = None
+    no_orderbook: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -285,6 +288,7 @@ class PolymarketScannerV2:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("POLYMARKET_API_KEY")
         self.session: Optional[aiohttp.ClientSession] = None
+        self._public_clob_client: Optional[ClobClient] = None
 
     async def __aenter__(self):
         self.session = aiohttp.ClientSession()
@@ -293,6 +297,7 @@ class PolymarketScannerV2:
     async def __aexit__(self, *args):
         if self.session:
             await self.session.close()
+            self.session = None
 
     # =========================================================================
     # Phase 1: Discovery
@@ -890,7 +895,7 @@ class PolymarketScannerV2:
                     token_ids = json.loads(clob_token_ids)
                     yes_token = token_ids[0] if len(token_ids) > 0 else None
                     no_token = token_ids[1] if len(token_ids) > 1 else None
-                    has_token_ids = yes_token is not None
+                    has_token_ids = yes_token is not None and no_token is not None
                     if not has_token_ids:
                         orderbook_reject = RejectReason.MISSING_CLOB_TOKEN_IDS
                 except:
@@ -903,16 +908,27 @@ class PolymarketScannerV2:
         midpoint_available = False
         book_available = False
         clob_reject = None
+        yes_orderbook = None
+        no_orderbook = None
 
-        if enable_orderbook and has_token_ids and yes_token:
-            # 驗證 /price
-            price_available = await self._check_price_endpoint(yes_token)
+        if enable_orderbook and has_token_ids and yes_token and no_token:
+            yes_price_available, no_price_available = await asyncio.gather(
+                self._check_price_endpoint(yes_token),
+                self._check_price_endpoint(no_token),
+            )
+            price_available = yes_price_available and no_price_available
 
-            # 驗證 /midpoint
-            midpoint_available = await self._check_midpoint_endpoint(yes_token)
+            yes_midpoint_available, no_midpoint_available = await asyncio.gather(
+                self._check_midpoint_endpoint(yes_token),
+                self._check_midpoint_endpoint(no_token),
+            )
+            midpoint_available = yes_midpoint_available and no_midpoint_available
 
-            # 驗證 /book
-            book_available = await self._check_book_endpoint(yes_token)
+            yes_orderbook, no_orderbook = await asyncio.gather(
+                self._fetch_orderbook(yes_token),
+                self._fetch_orderbook(no_token),
+            )
+            book_available = yes_orderbook is not None and no_orderbook is not None
 
             if not price_available and not midpoint_available and not book_available:
                 clob_reject = RejectReason.PRICE_ENDPOINT_UNAVAILABLE
@@ -928,9 +944,7 @@ class PolymarketScannerV2:
             and has_token_ids
         )
 
-        is_book_verified = is_clob_eligible and (
-            price_available or midpoint_available or book_available
-        )
+        is_book_verified = is_clob_eligible and book_available
 
         # 5. 活躍度代理
         volume = float(market.get("volume", 0) or 0)
@@ -954,7 +968,40 @@ class PolymarketScannerV2:
             is_clob_eligible=is_clob_eligible,
             is_book_verified=is_book_verified,
             volume=volume,
+            yes_orderbook=yes_orderbook,
+            no_orderbook=no_orderbook,
         )
+
+    async def _fetch_orderbook(self, token_id: str) -> Optional[Dict[str, Any]]:
+        """透過官方 SDK 抓取單一 token 的標準化訂單簿。"""
+        try:
+            payload = await asyncio.to_thread(
+                self._get_public_clob_client().get_order_book,
+                token_id,
+            )
+        except Exception:
+            return None
+        return self._normalize_orderbook_payload(payload)
+
+    def _normalize_orderbook_payload(self, payload: Any) -> Optional[Dict[str, Any]]:
+        """把官方 SDK 回傳的訂單簿統一轉成 dict 結構。"""
+        if isinstance(payload, dict):
+            return payload
+
+        bids = getattr(payload, "bids", None)
+        asks = getattr(payload, "asks", None)
+        if bids is None and asks is None:
+            return None
+        return {
+            "bids": list(bids or []),
+            "asks": list(asks or []),
+        }
+
+    def _get_public_clob_client(self) -> ClobClient:
+        """取得 scanner 共用的公開 CLOB client。"""
+        if self._public_clob_client is None:
+            self._public_clob_client = ClobClient(host=self.CLOB_API)
+        return self._public_clob_client
 
     async def _check_price_endpoint(self, token_id: str) -> bool:
         """檢查 /price 端點"""
@@ -1085,14 +1132,13 @@ class IntegratedScannerV2:
                     stats.clob_eligible_count += 1
 
                     # Pricing verified: CLOB-eligible + pricing API OK
-                    if tradability.price_available or tradability.midpoint_available:
+                    if tradability.is_book_verified:
                         self.pricing_verified.append((parsed, tradability))
                         stats.pricing_verified_count += 1
 
                         # Book verified: pricing verified + /book OK (嚴格層級)
-                        if tradability.book_available:
-                            self.book_verified.append((parsed, tradability))
-                            stats.book_verified_count += 1
+                        self.book_verified.append((parsed, tradability))
+                        stats.book_verified_count += 1
 
             logger.info(f"   CLOB Eligible: {stats.clob_eligible_count}")
             logger.info(f"   Pricing Verified: {stats.pricing_verified_count}")

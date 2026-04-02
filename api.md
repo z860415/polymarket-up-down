@@ -121,7 +121,13 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
 
 - 研究層不得再依賴舊的 `GET /book/{token_id}` 路徑
 - 需改用 `py-clob-client` 的 `get_order_book(token_id)` 公開方法
-- 研究層與執行層雖可使用不同實例，但需對齊同一份 CLOB 深度語義：`bids` / `asks` / `price` / `size`
+- scanner / research / 執行層需對齊同一份 CLOB 深度語義：`bids` / `asks` / `price` / `size`
+- scanner 的 tradability 驗證必須同時驗證 `yes_token` 與 `no_token`：
+  - `has_token_ids=true` 的前提是 YES / NO 兩邊 token 都存在
+  - `book_available=true` 的前提是 YES / NO 兩邊 order book 都成功取得
+  - 任一邊缺失時不得先計入 `clob_eligible` 或 `pricing_verified`
+- `ResearchPipeline.run()` 只可把 `tradability.book_available=true` 的市場放入 `tradable_markets`
+- scanner 若已取得雙邊 order book，需把標準化後的 `yes_orderbook` / `no_orderbook` 置於 `MarketTradability` 內供 research 重用；research 僅在快照缺失時才允許 fallback 重抓
 - `UP_DOWN` 研究層需改用單邊有效成交成本模型：
   - 先根據選定方向的 ask 檔位估算固定 notional 的加權平均成交價
   - 再以該有效成交價相對最佳 ask 的偏離，作為 `spread_pct` / friction 門檻

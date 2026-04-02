@@ -354,7 +354,7 @@ class ResearchPipeline:
 
             stats.clob_eligible_count += 1
 
-            if not (tradability.price_available or tradability.midpoint_available):
+            if not tradability.is_book_verified:
                 continue
 
             stats.pricing_verified_count += 1
@@ -462,10 +462,7 @@ class ResearchPipeline:
         now = datetime.now(timezone.utc)
         question = market.get("question", "")
 
-        yes_orderbook, no_orderbook = await asyncio.gather(
-            self._fetch_orderbook(tradability.yes_token),
-            self._fetch_orderbook(tradability.no_token),
-        )
+        yes_orderbook, no_orderbook = await self._get_market_orderbooks(tradability)
         if yes_orderbook is None or no_orderbook is None:
             return self._build_reject(
                 "orderbook_unavailable",
@@ -708,10 +705,7 @@ class ResearchPipeline:
                     "min_market_volume": self.min_market_volume,
                 },
             )
-        yes_orderbook, no_orderbook = await asyncio.gather(
-            self._fetch_orderbook(tradability.yes_token),
-            self._fetch_orderbook(tradability.no_token),
-        )
+        yes_orderbook, no_orderbook = await self._get_market_orderbooks(tradability)
         if yes_orderbook is None or no_orderbook is None:
             return self._build_reject(
                 "orderbook_unavailable",
@@ -1017,6 +1011,18 @@ class ResearchPipeline:
             "bids": list(bids or []),
             "asks": list(asks or []),
         }
+
+    async def _get_market_orderbooks(
+        self, tradability: MarketTradability
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """優先重用 scanner 已驗證的雙邊深度，缺失時才 fallback 重抓。"""
+        if tradability.yes_orderbook is not None and tradability.no_orderbook is not None:
+            return tradability.yes_orderbook, tradability.no_orderbook
+
+        return await asyncio.gather(
+            self._fetch_orderbook(tradability.yes_token),
+            self._fetch_orderbook(tradability.no_token),
+        )
 
     def _get_public_clob_client(self) -> ClobClient:
         """取得研究層使用的公開 CLOB client。"""
