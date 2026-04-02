@@ -1391,16 +1391,6 @@ class LiveExecutor:
         
         amount = min(kelly_size, bucket_amount)
         amount = max(amount, self.risk.min_position_per_trade)  # 保底
-        
-        # 確保能買到至少 5 shares (Polymarket API 要求)
-        min_shares = 5
-        min_amount_for_shares = min_shares * order_price
-        if amount < min_amount_for_shares:
-            lifecycle_logger.info(
-                "[DEBUG] 倉位調整 | original=%.4f | min_for_5_shares=%.4f | new=%.4f | price=%.4f",
-                amount, min_amount_for_shares, min_amount_for_shares, order_price
-            )
-            amount = min_amount_for_shares
         passed, reason = self.check_risk_limits(account, amount)
         lifecycle_logger.info(
             "[DEBUG] 檢查風控 | passed=%s | reason=%s | amount=%.4f | balance=%.2f",
@@ -1430,6 +1420,20 @@ class LiveExecutor:
         )
         if order_price <= 0:
             return self._reject_tail_candidate(candidate, "找不到可用的尾盤下單價格")
+        
+        # 確保能買到至少 5 shares (Polymarket API 要求)
+        min_shares = 5
+        min_amount_for_shares = min_shares * order_price
+        if amount < min_amount_for_shares:
+            lifecycle_logger.info(
+                "[DEBUG] 倉位調整 | original=%.4f | min_for_5_shares=%.4f | new=%.4f | price=%.4f",
+                amount, min_amount_for_shares, min_amount_for_shares, order_price
+            )
+            amount = min_amount_for_shares
+            # 重新檢查風控，因為 amount 已變大
+            passed, reason = self.check_risk_limits(account, amount)
+            if not passed:
+                return self._reject_tail_candidate(candidate, f"Risk limit after adjustment: {reason}")
 
         refreshed_yes_ask = opportunity.yes_ask or 0.0
         refreshed_no_ask = opportunity.no_ask or 0.0
