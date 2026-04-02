@@ -511,6 +511,24 @@ class ResearchPipeline:
         yes_ask = self._extract_best_price(yes_orderbook.get("asks", []))
         no_bid = self._extract_best_price(no_orderbook.get("bids", []))
         no_ask = self._extract_best_price(no_orderbook.get("asks", []))
+
+        # 檢查可疑的陳舊/異常價格（ABOVE_BELOW 市場也需要）
+        if self._is_suspicious_price(yes_ask, no_ask):
+            logger.warning(
+                "ABOVE_BELOW 檢測到可疑價格 - market_id=%s | yes_ask=%s | no_ask=%s",
+                tradability.market_id, yes_ask, no_ask
+            )
+            return self._build_reject(
+                "suspicious_stale_prices",
+                parsed,
+                market,
+                detail={
+                    "yes_ask": yes_ask,
+                    "no_ask": no_ask,
+                    "reason": "價格接近 0.99/0.01，可能是流動性枯竭或陳舊數據",
+                },
+            )
+
         if yes_ask is None or no_ask is None:
             return self._build_reject(
                 "ask_quote_missing",
@@ -766,6 +784,25 @@ class ResearchPipeline:
         yes_ask = self._extract_best_price(yes_orderbook.get("asks", []))
         no_bid = self._extract_best_price(no_orderbook.get("bids", []))
         no_ask = self._extract_best_price(no_orderbook.get("asks", []))
+
+        # 檢查可疑的陳舊/異常價格（如 0.99 表示流動性枯竭或數據錯誤）
+        if self._is_suspicious_price(yes_ask, no_ask):
+            logger.warning(
+                "檢測到可疑價格 - market_id=%s | yes_ask=%s | no_ask=%s | "
+                "可能是流動性枯竭或陳舊數據，拒絕交易",
+                tradability.market_id, yes_ask, no_ask
+            )
+            return self._build_reject(
+                "suspicious_stale_prices",
+                parsed,
+                market,
+                detail={
+                    "yes_ask": yes_ask,
+                    "no_ask": no_ask,
+                    "reason": "價格接近 0.99/0.01，可能是流動性枯竭或陳舊數據",
+                },
+            )
+
         yes_effective_ask = self._estimate_effective_buy_price(
             yes_orderbook.get("asks", []),
             self.effective_cost_notional_usdc,
@@ -1106,14 +1143,24 @@ class ResearchPipeline:
     async def _get_market_orderbooks(
         self, tradability: MarketTradability
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-        """優先重用 scanner 已驗證的雙邊深度，缺失時才 fallback 重抓。"""
-        if tradability.yes_orderbook is not None and tradability.no_orderbook is not None:
-            return tradability.yes_orderbook, tradability.no_orderbook
-
-        return await asyncio.gather(
+        """
+        始終獲取實時訂單簿數據，確保決策基於最新市場價格。
+        不重用舊數據，避免陳舊價格導致錯誤決策。
+        """
+        # 強制重新獲取實時訂單簿，不使用緩存
+        yes_book, no_book = await asyncio.gather(
             self._fetch_orderbook(tradability.yes_token),
             self._fetch_orderbook(tradability.no_token),
         )
+
+        # 記錄獲取時間戳，用於數據新鮮度驗證
+        now = datetime.now(timezone.utc).isoformat()
+        if yes_book:
+            yes_book["_fetched_at"] = now
+        if no_book:
+            no_book["_fetched_at"] = now
+
+        return yes_book, no_book
 
     def _get_public_clob_client(self) -> ClobClient:
         """取得研究層使用的公開 CLOB client。"""
@@ -1274,6 +1321,33 @@ class ResearchPipeline:
         if price > 1:
             return price / 100
         return price
+
+    def _is_suspicious_price(self, yes_ask: Optional[float], no_ask: Optional[float]) -> bool:
+        """
+        檢測可疑的陳舊或異常價格。
+        
+        當 yes_ask 和 no_ask 都接近 0.99 時，表示：
+        1. 流動性完全枯竭（做市商撤離）
+        2. 數據陳舊（使用舊的快照）
+        3. 市場即將結算或已暫停交易
+        
+        這種情況下應拒絕交易，避免基於錯誤價格做決策。
+        """
+        if yes_ask is None or no_ask is None:
+            return False
+        
+        # 閾值：當價格高於 0.95 時視為可疑
+        SUSPICIOUS_THRESHOLD = 0.95
+        
+        # 如果兩邊價格都接近 1.0，表示流動性枯竭
+        if yes_ask >= SUSPICIOUS_THRESHOLD and no_ask >= SUSPICIOUS_THRESHOLD:
+            return True
+        
+        # 如果 yes_ask + no_ask > 1.9，價格明顯異常
+        if (yes_ask + no_ask) > 1.9:
+            return True
+        
+        return False
 
     def _calculate_spread_pct(
         self,

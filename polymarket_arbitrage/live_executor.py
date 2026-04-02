@@ -1103,9 +1103,9 @@ class LiveExecutor:
         # 轉換 shares：shares = 金額 / 價格
         shares = amount / expected_price if expected_price > 0 else 0
 
-        # 檢查最小訂單大小（Polymarket 要求最少 5 shares）
-        if shares < 5:
-            logger.warning(f"Order too small: {shares:.2f} shares (< 5 min)")
+        # 檢查最小訂單金額（Polymarket 要求最少 1 USDC）
+        if amount < 1.0:
+            logger.warning(f"Order too small: ${amount:.2f} (< $1.0 min)")
             return LiveExecutionResult(
                 order_id="",
                 market_id=market_def.market_id,
@@ -1118,11 +1118,30 @@ class LiveExecutor:
                 fee_paid=0.0,
                 status=LiveExecutionStatus.FAILED,
                 created_at=datetime.now(timezone.utc),
-                error_message=f"Order too small: {shares:.2f} shares (min 5)",
+                error_message=f"Order too small: ${amount:.2f} (min $1.0)",
             )
 
         # 向下取整到整數 shares
         shares = int(shares)
+        
+        # Polymarket API 要求最少 5 shares
+        if shares < 5:
+            logger.warning(f"Order too small: {shares} shares (< 5 min)")
+            return LiveExecutionResult(
+                order_id="",
+                market_id=market_def.market_id,
+                observation_id=observation.observation_id,
+                side=side,
+                size=amount,
+                price=expected_price,
+                filled_size=0.0,
+                avg_fill_price=0.0,
+                fee_paid=0.0,
+                status=LiveExecutionStatus.FAILED,
+                created_at=datetime.now(timezone.utc),
+                error_message=f"Order too small: {shares} shares (min 5)",
+            )
+        
         actual_amount = shares * expected_price  # 實際花費
         reference_ask = yes_ask if side == "YES" else no_ask
 
