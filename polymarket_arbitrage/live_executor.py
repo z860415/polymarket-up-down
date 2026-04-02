@@ -1391,6 +1391,16 @@ class LiveExecutor:
         
         amount = min(kelly_size, bucket_amount)
         amount = max(amount, self.risk.min_position_per_trade)  # 保底
+        
+        # 確保能買到至少 5 shares (Polymarket API 要求)
+        min_shares = 5
+        min_amount_for_shares = min_shares * order_price
+        if amount < min_amount_for_shares:
+            lifecycle_logger.info(
+                "[DEBUG] 倉位調整 | original=%.4f | min_for_5_shares=%.4f | new=%.4f | price=%.4f",
+                amount, min_amount_for_shares, min_amount_for_shares, order_price
+            )
+            amount = min_amount_for_shares
         passed, reason = self.check_risk_limits(account, amount)
         lifecycle_logger.info(
             "[DEBUG] 檢查風控 | passed=%s | reason=%s | amount=%.4f | balance=%.2f",
