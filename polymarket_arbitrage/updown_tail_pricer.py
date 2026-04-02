@@ -194,24 +194,45 @@ class UpDownTailPricer:
             p_up = NormalDist().cdf(lead_z)
         p_down = 1.0 - p_up
 
-        gross_edge_up = p_up - (snapshot.yes_bid or 1.0)
-        gross_edge_down = p_down - (snapshot.no_bid or 1.0)
+        # 檢查價格數據有效性 - 若為 None 則無法計算 Edge
+        if snapshot.yes_bid is None or snapshot.no_bid is None:
+            return TailStrategyEstimate(
+                p_up=p_up,
+                p_down=p_down,
+                selected_side="YES",
+                selected_net_edge=-1.0,
+                selected_execution_mode="maker",
+                confidence_score=0.0,
+                maker_fill_penalty=0.0,
+                fee_cost=0.0,
+                slippage_cost=0.0,
+                fill_penalty=0.0,
+            )
+
+        gross_edge_up = p_up - snapshot.yes_bid
+        gross_edge_down = p_down - snapshot.no_bid
         maker_fill_penalty = self._estimate_fill_penalty(snapshot)
         maker_net_edge_up = gross_edge_up - maker_fill_penalty
         maker_net_edge_down = gross_edge_down - maker_fill_penalty
 
-        taker_gross_edge_up = p_up - (snapshot.yes_ask or 1.0)
-        taker_gross_edge_down = p_down - (snapshot.no_ask or 1.0)
-        taker_fee_cost_up = self._estimate_taker_fee_cost(snapshot, snapshot.yes_ask)
-        taker_fee_cost_down = self._estimate_taker_fee_cost(snapshot, snapshot.no_ask)
-        slippage_cost_up = self._estimate_slippage_cost(yes_execution_cost_pct)
-        slippage_cost_down = self._estimate_slippage_cost(no_execution_cost_pct)
-        taker_net_edge_up = (
-            taker_gross_edge_up - taker_fee_cost_up - slippage_cost_up
-        )
-        taker_net_edge_down = (
-            taker_gross_edge_down - taker_fee_cost_down - slippage_cost_down
-        )
+        # 檢查 ask 價格有效性
+        if snapshot.yes_ask is None or snapshot.no_ask is None:
+            # 無 taker 價格，僅使用 maker 邏輯
+            taker_net_edge_up = -1.0
+            taker_net_edge_down = -1.0
+        else:
+            taker_gross_edge_up = p_up - snapshot.yes_ask
+            taker_gross_edge_down = p_down - snapshot.no_ask
+            taker_fee_cost_up = self._estimate_taker_fee_cost(snapshot, snapshot.yes_ask)
+            taker_fee_cost_down = self._estimate_taker_fee_cost(snapshot, snapshot.no_ask)
+            slippage_cost_up = self._estimate_slippage_cost(yes_execution_cost_pct)
+            slippage_cost_down = self._estimate_slippage_cost(no_execution_cost_pct)
+            taker_net_edge_up = (
+                taker_gross_edge_up - taker_fee_cost_up - slippage_cost_up
+            )
+            taker_net_edge_down = (
+                taker_gross_edge_down - taker_fee_cost_down - slippage_cost_down
+            )
 
         if maker_net_edge_up >= maker_net_edge_down:
             selected_side = "YES"
