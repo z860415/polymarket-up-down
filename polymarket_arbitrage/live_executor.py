@@ -1499,6 +1499,13 @@ class LiveExecutor:
     ) -> LiveExecutionResult:
         """建立尾盤候選機會拒絕結果。"""
         opportunity = candidate.opportunity
+        lifecycle_logger.info(
+            "[DEBUG] 尾盤候選拒絕 | asset=%s | side=%s | edge=%.4f | reason=%s",
+            opportunity.asset,
+            opportunity.selected_side,
+            getattr(opportunity, "net_edge", 0),
+            reason,
+        )
         return LiveExecutionResult(
             order_id="",
             market_id=opportunity.market_id,
