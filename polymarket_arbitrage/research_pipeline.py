@@ -714,15 +714,27 @@ class ResearchPipeline:
         window_state = self.tail_pricer.resolve_window_state(
             parsed.timeframe, tau_seconds
         ).value
-        if window_state not in {"armed", "attack", "observe"}:
+        if window_state == "observe":
             return self._build_reject(
                 "window_not_open",
                 parsed,
                 market,
-                detail={
-                    "window_state": window_state,
-                    "tau_seconds": round(tau_seconds, 1),
-                },
+                detail=self._build_window_not_open_detail(
+                    parsed.timeframe,
+                    window_state,
+                    tau_seconds,
+                ),
+            )
+        if window_state not in {"armed", "attack"}:
+            return self._build_reject(
+                "window_not_open",
+                parsed,
+                market,
+                detail=self._build_window_not_open_detail(
+                    parsed.timeframe,
+                    window_state,
+                    tau_seconds,
+                ),
             )
         if tradability.volume < self.min_market_volume:
             return self._build_reject(
@@ -1017,6 +1029,44 @@ class ResearchPipeline:
         if detail:
             payload.update(detail)
         return None, reason, payload
+
+    def _build_window_not_open_detail(
+        self,
+        timeframe: Optional[str],
+        window_state: str,
+        tau_seconds: float,
+    ) -> Dict[str, Any]:
+        """建立 `window_not_open` 的統一補充欄位，供監控與日誌使用。"""
+        window_config = TAIL_WINDOWS.get(timeframe or "", {})
+        armed_seconds = window_config.get("armed")
+        attack_seconds = window_config.get("attack")
+
+        if window_state == "observe":
+            window_label = "已開盤未進尾盤"
+        elif window_state == "armed":
+            window_label = "已進入尾盤觀察窗"
+        elif window_state == "attack":
+            window_label = "已進入攻擊窗"
+        elif window_state == "expired":
+            window_label = "已過期"
+        else:
+            window_label = window_state
+
+        return {
+            "window_state": window_state,
+            "window_label": window_label,
+            "tau_seconds": round(tau_seconds, 1),
+            "seconds_to_armed": (
+                round(max(tau_seconds - armed_seconds, 0.0), 1)
+                if armed_seconds is not None
+                else None
+            ),
+            "seconds_to_attack": (
+                round(max(tau_seconds - attack_seconds, 0.0), 1)
+                if attack_seconds is not None
+                else None
+            ),
+        }
 
     async def _fetch_orderbook(self, token_id: str) -> Optional[Dict[str, Any]]:
         """抓取單一 token 的訂單簿。"""

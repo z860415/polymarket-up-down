@@ -330,7 +330,7 @@ def test_analyze_up_down_market_observe_rejects_before_expensive_fetches(
         style="UP_DOWN",
         timeframe="5m",
         strike=None,
-        expiry=datetime.now(timezone.utc) + timedelta(seconds=300),
+        expiry=datetime.now(timezone.utc) + timedelta(seconds=200),
         is_crypto=True,
         is_short_term=True,
     )
@@ -406,8 +406,16 @@ def test_analyze_up_down_market_observe_rejects_before_expensive_fetches(
         pipeline._analyze_up_down_market(parsed, market, tradability)
     )
 
-    # observe 現在允許通過，不再被封死拒絕
-    assert candidate is not None or reject_reason != "window_not_open"
+    assert candidate is None
+    assert reject_reason == "window_not_open"
+    assert reject_detail["window_state"] == "observe"
+    assert reject_detail["window_label"] == "已開盤未進尾盤"
+    assert reject_detail["seconds_to_armed"] > 0
+    assert reject_detail["seconds_to_attack"] > 0
+    assert calls["orderbook"] == 0
+    assert calls["spot"] == 0
+    assert calls["anchor"] == 0
+    assert calls["volatility"] == 0
 
 
 def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) -> None:
@@ -423,7 +431,7 @@ def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) 
         style="UP_DOWN",
         timeframe="5m",
         strike=None,
-        expiry=datetime.now(timezone.utc) + timedelta(seconds=300),
+        expiry=datetime.now(timezone.utc) + timedelta(seconds=200),
         is_crypto=True,
         is_short_term=True,
     )
@@ -460,6 +468,9 @@ def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) 
     async def fake_check_tradability(_: dict, verify_depth: bool = True):
         return tradability
 
+    async def fake_verify_orderbook_depth(tradability_input):
+        return tradability_input
+
     async def fake_analyze_market(*args, **kwargs):
         analyze_calls["count"] += 1
         return (
@@ -478,6 +489,11 @@ def test_run_allows_observe_up_down_markets_into_analyze(tmp_path, monkeypatch) 
         pipeline.scanner, "parse_market", lambda event, raw_market: (parsed, None, {})
     )
     monkeypatch.setattr(pipeline.scanner, "check_tradability", fake_check_tradability)
+    monkeypatch.setattr(
+        pipeline.scanner,
+        "verify_orderbook_depth",
+        fake_verify_orderbook_depth,
+    )
     monkeypatch.setattr(pipeline, "_analyze_market", fake_analyze_market)
 
     try:

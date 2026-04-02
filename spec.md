@@ -124,6 +124,7 @@
 - `UP / DOWN` 主研究線需區分「市場是否開盤」與「策略窗口是否開啟」：開盤且未過期的市場必須進入 `_analyze_market()`；其中 `observe` 僅用於統一回傳 `window_not_open`，`armed / attack` 才進入完整研究打分
 - `UP / DOWN` 在 research 前置過濾需額外區分「尚未開盤」市場；若 `market_start_timestamp > now`，應以前置拒絕 `market_not_open_yet` 記錄，避免把尚未生成開盤 K 線的市場混入 `anchor_unavailable`
 - `UP / DOWN` 市場雖可在 scanner / research 交界保留 `observe` 狀態進入 `_analyze_market()`，但 `_analyze_up_down_market()` 在算出 `window_state` 後必須立即以前置拒絕 `window_not_open` 早退，不得對 `observe` 市場繼續做 order book、spot、anchor、波動率等重成本分析
+- `observe` 市場的研究拒絕原因必須固定為 `window_not_open`；不得先落入 `orderbook_unavailable`、`ask_quote_missing`、`both_edges_negative`、`edge_too_low` 等後置拒絕，避免監控漏斗與窗口語義不一致
 - `window_not_open` reject detail 至少需帶出 `window_state`、`window_label`、`tau_seconds`、`seconds_to_armed`、`seconds_to_attack`，讓監控頁能正確顯示「已開盤未進尾盤」
 - `ResearchPipeline.run()` 在第一段只可把通過 status / token / 輕量 quote 檢查的市場放入候選池；經排序與 `filter_live_markets_for_analysis()` 後，才可對剩餘市場補做雙邊 depth 驗證
 - `observe` 市場仍屬有效候選，但完整雙邊 order book 抓取不得發生在 research 入口前；必須等到窗口過濾後，與 `armed / attack` 候選一起進入第二段 depth 驗證

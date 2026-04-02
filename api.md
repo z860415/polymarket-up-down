@@ -148,6 +148,7 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - `lead_z_too_low` / `edge_too_low`
 - `observe` 市場不需完成研究層定價與打分；它只需在 `_analyze_up_down_market()` 內統一產出 `window_not_open`，且在使用者文案上明確顯示為「已開盤未進尾盤」
 - `_analyze_up_down_market()` 在算出 `window_state` 後，若市場仍為 `observe`，需立即以 `window_not_open` 拒絕並早退，不得繼續進行 order book、spot、anchor、volatility 抓取
+- `observe` 市場的拒絕原因不得被後續深度或 edge 拒絕覆蓋；只要 `window_state=observe`，就必須固定回傳 `window_not_open`
 - `window_not_open` reject detail 至少需帶出：
   - `window_state`
   - `window_label`
