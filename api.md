@@ -106,6 +106,10 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - `/markets`：保留 `order=volume&ascending=false`，提供可交易熱門樣本
   - `/events`：使用 `tag_slug=crypto&related_tags=true&order=endDate&ascending=true`，補足近端即將到期市場
 - 合併後需按 `market_id` 去重，且優先保留 `/markets` 來源的 market payload
+- `get_all_events()` 在合併前必須先做 discovery-time UTC 時間清洗：
+  - `market.endDate` 為主，`event.endDate` 為 fallback
+  - 若 payload 解析出的 `expiry <= datetime.now(timezone.utc)`，即使遠端仍標記 `active=true` / `closed=false`，也必須直接剔除
+  - 過期 payload 不得進入 `expand_markets()`、`parse_market()`、`check_tradability()` 與後續研究拒絕漏斗
 - 若 CLI / runtime 只允許 `up_down`，research 主線在 scanner / research 交界只應前置過濾已過期市場；`window_state=observe` 的開盤市場仍需進入 `_analyze_market()`
 - 若 `UP_DOWN` 市場存在 `market_start_timestamp` 且其值大於目前時間，需以前置拒絕 `market_not_open_yet` 記錄，不得進入 anchor 抓取階段並混入 `anchor_unavailable`
 - 研究層的資產識別需優先使用完整詞、價格語義與常見 ticker 邊界匹配

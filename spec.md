@@ -83,6 +83,7 @@
 - 若運行參數只允許 `up_down`，discovery 不得只依賴 `/markets order=volume desc` 單一視窗；需額外合併 `tag_slug=crypto`、`order=endDate`、`ascending=true` 的近端 `events` 視窗，避免低成交但即將進入 live 窗口的市場被熱門排序完全漏掉
 - 合併後的 `UP_DOWN` 候選需以 `market_id` 去重；同一市場若同時來自 `/markets` 與 `/events`，應優先保留 `/markets` 版本
 - 已過期 `UP_DOWN` 市場不得因 `events` 回傳殘留資料再度進入研究主線
+- Gamma `events` / `markets` 的 `active=true`、`closed=false` 不可信時，discovery 層仍必須以 payload 內的 `market.endDate`（fallback `event.endDate`）做 UTC 硬性時間清洗；凡 `expiry <= now` 的市場需在 merge / expand 前直接剔除，不得再占用 parse、tradability、排序與研究分析配額
 - 若運行參數只允許 `up_down`，research 主線在 scanner / research 交界只允許擋掉「已過期 / 已不可推進」的市場；只要市場仍開盤且未過期，即使 `window_state=observe` 也必須進入 `_analyze_market()`
 - crypto `up_down` discovery 需優先按 `endDate` 近端排序，確保短週期市場不被長週期事件淹沒
 - 資產識別不得使用無邊界的子字串命中；`eth`、`sol`、`dot` 等縮寫必須以單詞邊界或明確價格語義匹配，避免 `Netherlands`、`soldier` 之類誤判

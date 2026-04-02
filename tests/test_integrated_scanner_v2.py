@@ -146,8 +146,8 @@ def test_get_all_events_merges_markets_and_crypto_events_for_up_down() -> None:
             {
                 "id": "m-hot",
                 "slug": "btc-hot",
-                "question": "Bitcoin Up or Down - March 29, 1:55AM-2:00AM ET",
-                "endDate": "2026-03-29T06:00:00Z",
+                "question": "Bitcoin Up or Down - April 3, 1:55AM-2:00AM ET",
+                "endDate": "2026-04-03T06:00:00Z",
                 "events": [{"id": "evt-hot", "title": "Bitcoin Up or Down - hot"}],
             }
         ]
@@ -156,12 +156,12 @@ def test_get_all_events_merges_markets_and_crypto_events_for_up_down() -> None:
         return [
             {
                 "id": "evt-near",
-                "title": "Ethereum Up or Down - March 29, 2:00AM-2:05AM ET",
+                "title": "Ethereum Up or Down - April 3, 2:00AM-2:05AM ET",
                 "markets": [
                     {
                         "id": "m-near",
-                        "question": "Ethereum Up or Down - March 29, 2:00AM-2:05AM ET",
-                        "endDate": "2026-03-29T06:05:00Z",
+                        "question": "Ethereum Up or Down - April 3, 2:00AM-2:05AM ET",
+                        "endDate": "2026-04-03T06:05:00Z",
                     }
                 ],
             }
@@ -185,7 +185,7 @@ def test_get_all_events_prefers_markets_payload_when_duplicate_market_exists() -
                 "id": "m-dup",
                 "slug": "btc-dup-market",
                 "question": "Bitcoin Up or Down - Market Payload",
-                "endDate": "2026-03-29T06:00:00Z",
+                "endDate": "2026-04-03T06:00:00Z",
                 "events": [{"id": "evt-market", "title": "Bitcoin Up or Down - Market Payload"}],
             }
         ]
@@ -199,7 +199,7 @@ def test_get_all_events_prefers_markets_payload_when_duplicate_market_exists() -
                     {
                         "id": "m-dup",
                         "question": "Bitcoin Up or Down - Event Payload",
-                        "endDate": "2026-03-29T06:00:00Z",
+                        "endDate": "2026-04-03T06:00:00Z",
                     }
                 ],
             }
@@ -212,6 +212,80 @@ def test_get_all_events_prefers_markets_payload_when_duplicate_market_exists() -
 
     assert len(events) == 1
     assert events[0]["markets"][0]["question"] == "Bitcoin Up or Down - Market Payload"
+
+
+def test_get_all_events_filters_expired_markets_payloads_before_merge() -> None:
+    """`/markets` 若回傳已過期但仍標 active 的 market，discovery 應直接剔除。"""
+    scanner = PolymarketScannerV2(api_key="test")
+
+    async def fake_get_all_markets(limit: int = 200):
+        return [
+            {
+                "id": "m-expired",
+                "slug": "btc-expired-market",
+                "question": "Bitcoin Up or Down - April 1, 11:00PM-11:05PM ET",
+                "endDate": "2026-04-02T03:05:00Z",
+                "events": [{"id": "evt-expired", "title": "Bitcoin Up or Down - expired"}],
+            },
+            {
+                "id": "m-live",
+                "slug": "eth-live-market",
+                "question": "Ethereum Up or Down - April 2, 11:10PM-11:15PM ET",
+                "endDate": "2026-04-03T03:15:00Z",
+                "events": [{"id": "evt-live", "title": "Ethereum Up or Down - live"}],
+            },
+        ]
+
+    async def fake_get_crypto_events(limit: int = 200):
+        return []
+
+    scanner.get_all_markets = fake_get_all_markets  # type: ignore[method-assign]
+    scanner.get_crypto_events = fake_get_crypto_events  # type: ignore[method-assign]
+
+    events = asyncio.run(scanner.get_all_events(limit=30, allowed_styles={"up_down"}))
+
+    assert [event["markets"][0]["id"] for event in events] == ["m-live"]
+
+
+def test_get_all_events_filters_expired_crypto_event_payloads_before_merge() -> None:
+    """`/events` 若回傳陳舊 crypto event，合併前也必須先做過期清洗。"""
+    scanner = PolymarketScannerV2(api_key="test")
+
+    async def fake_get_all_markets(limit: int = 200):
+        return []
+
+    async def fake_get_crypto_events(limit: int = 200):
+        return [
+            {
+                "id": "evt-expired",
+                "title": "Ethereum Up or Down - December 19, 11:30AM-11:35AM ET",
+                "markets": [
+                    {
+                        "id": "m-expired",
+                        "question": "Ethereum Up or Down - December 19, 11:30AM-11:35AM ET",
+                        "endDate": "2025-12-19T16:35:00Z",
+                    }
+                ],
+            },
+            {
+                "id": "evt-live",
+                "title": "Solana Up or Down - April 2, 11:10PM-11:15PM ET",
+                "markets": [
+                    {
+                        "id": "m-live",
+                        "question": "Solana Up or Down - April 2, 11:10PM-11:15PM ET",
+                        "endDate": "2026-04-03T03:15:00Z",
+                    }
+                ],
+            },
+        ]
+
+    scanner.get_all_markets = fake_get_all_markets  # type: ignore[method-assign]
+    scanner.get_crypto_events = fake_get_crypto_events  # type: ignore[method-assign]
+
+    events = asyncio.run(scanner.get_all_events(limit=30, allowed_styles={"up_down"}))
+
+    assert [event["markets"][0]["id"] for event in events] == ["m-live"]
 
 
 def test_expand_markets_prefilters_up_down_style() -> None:

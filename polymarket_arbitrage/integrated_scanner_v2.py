@@ -428,6 +428,38 @@ class PolymarketScannerV2:
 
         return merged_events
 
+    def _parse_discovery_expiry(
+        self,
+        event: Dict[str, Any],
+    ) -> Optional[datetime]:
+        """解析 discovery payload 的到期時間，優先使用 market endDate。"""
+        markets = event.get("markets", [])
+        market = markets[0] if markets else {}
+        end_date_str = market.get("endDate") or event.get("endDate")
+        if not end_date_str:
+            return None
+        try:
+            return datetime.fromisoformat(str(end_date_str).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    def _filter_expired_discovery_events(
+        self,
+        events: List[Dict[str, Any]],
+        now: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """在 discovery 階段硬性剔除已過期 payload，避免髒資料占用後續配額。"""
+        current_time = now or datetime.now(timezone.utc)
+        filtered_events: List[Dict[str, Any]] = []
+
+        for event in events:
+            expiry = self._parse_discovery_expiry(event)
+            if expiry is not None and expiry <= current_time:
+                continue
+            filtered_events.append(event)
+
+        return filtered_events
+
     async def get_all_markets(self, limit: int = 200) -> List[Dict]:
         """獲取高流動性且可掛單的 market，作為 discovery 主來源。"""
         url = f"{self.GAMMA_API}/markets"
@@ -463,7 +495,9 @@ class PolymarketScannerV2:
     ) -> List[Dict]:
         """建立 discovery 清單，`UP_DOWN` 需合併熱門 market 與近端 crypto events。"""
         markets = await self.get_all_markets(limit=limit)
-        market_events = [self._normalize_market_to_event(market) for market in markets]
+        market_events = self._filter_expired_discovery_events(
+            [self._normalize_market_to_event(market) for market in markets]
+        )
 
         should_merge_crypto_events = allowed_styles == {"up_down"}
         if should_merge_crypto_events:
@@ -473,12 +507,21 @@ class PolymarketScannerV2:
             split_crypto_events: List[Dict[str, Any]] = []
             for event in crypto_events:
                 split_crypto_events.extend(self._split_event_markets(event))
-            return self._merge_discovery_events(market_events, split_crypto_events)
+            return self._merge_discovery_events(
+                market_events,
+                self._filter_expired_discovery_events(split_crypto_events),
+            )
 
         if market_events:
             return market_events
 
-        return await self.get_crypto_events(limit=limit)
+        fallback_events = await self.get_crypto_events(limit=limit)
+        if allowed_styles == {"up_down"}:
+            split_fallback_events: List[Dict[str, Any]] = []
+            for event in fallback_events:
+                split_fallback_events.extend(self._split_event_markets(event))
+            return self._filter_expired_discovery_events(split_fallback_events)
+        return self._filter_expired_discovery_events(fallback_events)
 
     def expand_markets(
         self,

@@ -8,6 +8,7 @@
 
 ## 已完成
 
+- [x] T130 本輪：在 discovery 階段硬性剔除 Gamma 回傳的已過期市場，避免 `active=true` 的陳舊 crypto `up_down` 樣本佔用研究配額並導致當日資料庫無記錄
 - [x] T129 本輪：將 `UP_DOWN` 尾盤策略改為 research / execute 對齊的 maker 正確版，補上 maker edge、官方 taker fee 公式與執行模式契約
 - [x] T128 本輪：修正 `observe` 市場在 `_analyze_up_down_market()` 的語義，統一以前置 `window_not_open` 早退，避免再落入 `book_not_found` / `both_edges_negative` 等後置拒絕
 - [x] T127 本輪：將 research 主線的雙邊深度抓取延後到排序與 live 窗口過濾之後，改為兩段式 tradability，避免 `observe` 與非入選市場過早消耗 order book I/O
