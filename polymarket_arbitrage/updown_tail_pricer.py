@@ -32,7 +32,7 @@ TAIL_SIGMA_WINDOWS = {
 
 TAIL_WINDOWS = {
     "1m": {"armed": 15, "attack": 10},
-    "5m": {"armed": 60, "attack": 45},
+    "5m": {"armed": 30, "attack": 60},  # 激進化: 60→30, 45→60
     "15m": {"armed": 120, "attack": 90},
     "1h": {"armed": 600, "attack": 300},
     "4h": {"armed": 1800, "attack": 1200},
