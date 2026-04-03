@@ -32,7 +32,7 @@ TAIL_SIGMA_WINDOWS = {
 
 TAIL_WINDOWS = {
     "1m": {"armed": 15, "attack": 10},
-    "5m": {"armed": 120, "attack": 45},  # 收盤前2分鐘進場: armed=120s, attack=45s
+    "5m": {"armed": 60, "attack": 120},  # 收盤前2分鐘實際下單: armed=60s準備, attack=120s交易
     "15m": {"armed": 120, "attack": 90},
     "1h": {"armed": 600, "attack": 300},
     "4h": {"armed": 1800, "attack": 1200},
