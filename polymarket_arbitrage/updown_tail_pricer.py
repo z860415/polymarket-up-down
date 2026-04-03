@@ -203,7 +203,6 @@ class UpDownTailPricer:
                 selected_net_edge=-1.0,
                 selected_execution_mode="maker",
                 confidence_score=0.0,
-                maker_fill_penalty=0.0,
                 fee_cost=0.0,
                 slippage_cost=0.0,
                 fill_penalty=0.0,
