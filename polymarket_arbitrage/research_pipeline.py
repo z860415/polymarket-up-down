@@ -1332,19 +1332,23 @@ class ResearchPipeline:
         3. 市場即將結算或已暫停交易
         
         這種情況下應拒絕交易，避免基於錯誤價格做決策。
+        
+        修復 (2026-04-03): 放寬閾值，因 Polymarket API 常返回 yes_ask=no_ask=0.99
+        這實際上是訂單簿深度不足，而非數據錯誤。改用 0.995 閾值並增加總和檢查。
         """
         if yes_ask is None or no_ask is None:
             return False
         
-        # 閾值：當價格高於 0.95 時視為可疑
-        SUSPICIOUS_THRESHOLD = 0.95
+        # 閾值放寬：當價格高於 0.995 時視為可疑（原 0.95）
+        SUSPICIOUS_THRESHOLD = 0.995
         
-        # 如果兩邊價格都接近 1.0，表示流動性枯竭
+        # 如果兩邊價格都極接近 1.0，表示流動性完全枯竭
         if yes_ask >= SUSPICIOUS_THRESHOLD and no_ask >= SUSPICIOUS_THRESHOLD:
             return True
         
-        # 如果 yes_ask + no_ask > 1.9，價格明顯異常
-        if (yes_ask + no_ask) > 1.9:
+        # 如果 yes_ask + no_ask > 1.99，價格明顯異常（原 1.9）
+        # 注意：Polymarket 常返回 yes_ask=no_ask=0.99，總和 1.98，這應允許通過
+        if (yes_ask + no_ask) > 1.99:
             return True
         
         return False
