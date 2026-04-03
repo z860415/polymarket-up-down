@@ -185,7 +185,7 @@ class RealtimeOrderBookCache:
             if self._session is None or self._session.closed:
                 self._session = aiohttp.ClientSession()
 
-            self._ws = await self._session.ws_connect(self.ws_url, heartbeat=0)
+            self._ws = await self._session.ws_connect(self.ws_url, heartbeat=None)
             self._reader_task = asyncio.create_task(self._reader_loop())
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             logger.info("已建立 Polymarket market WebSocket 連線")
