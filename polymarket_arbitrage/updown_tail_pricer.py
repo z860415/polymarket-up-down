@@ -199,13 +199,20 @@ class UpDownTailPricer:
             return TailStrategyEstimate(
                 p_up=p_up,
                 p_down=p_down,
-                selected_side="YES",
-                selected_net_edge=-1.0,
-                selected_execution_mode="maker",
-                confidence_score=0.0,
+                lead_z=lead_z,
+                gross_edge_up=0.0,
+                gross_edge_down=0.0,
                 fee_cost=0.0,
+                slippage_cost_up=0.0,
+                slippage_cost_down=0.0,
                 slippage_cost=0.0,
                 fill_penalty=0.0,
+                net_edge_up=-1.0,
+                net_edge_down=-1.0,
+                selected_side="YES",
+                selected_net_edge=-1.0,
+                window_state=snapshot.window_state,
+                confidence_score=0.0,
             )
 
         gross_edge_up = p_up - snapshot.yes_bid
