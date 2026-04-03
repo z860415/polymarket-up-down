@@ -149,7 +149,19 @@ class AutoTradingPipeline:
         )
 
         candidate_limit = max_candidates or self.max_candidates_per_cycle
-        selected_candidates = scan_result.candidates[:candidate_limit]
+        
+        # 5m attack phase: bypass candidate limit, trade all valid opportunities directly
+        attack_5m_candidates = [
+            c for c in scan_result.candidates
+            if c.opportunity.timeframe == "5m" and c.selected_window_state == "attack"
+        ]
+        other_candidates = [
+            c for c in scan_result.candidates
+            if not (c.opportunity.timeframe == "5m" and c.selected_window_state == "attack")
+        ]
+        
+        # For 5m attack: take all, for others: apply limit
+        selected_candidates = attack_5m_candidates + other_candidates[:candidate_limit]
         rejected_count = max(
             0, scan_result.opportunity_count - len(selected_candidates)
         )
