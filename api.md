@@ -124,8 +124,33 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
 ### Order Book 抓取約束
 
 - 研究層不得再依賴舊的 `GET /book/{token_id}` 路徑
+- 即時深度主來源需優先改為官方 market WebSocket，而不是把 SDK `get_order_book()` 當成唯一即時資料
+- 官方 market WebSocket 契約：
+  - 端點：`wss://ws-subscriptions-clob.polymarket.com/ws/market`
+  - 初始訂閱：
+    - `{"assets_ids": [...], "type": "market", "custom_feature_enabled": true}`
+  - 動態追加訂閱：
+    - `{"operation": "subscribe", "assets_ids": [...], "custom_feature_enabled": true}`
+  - heartbeat：
+    - client 每 `10` 秒送 `PING`
+    - server 回 `PONG`
+- market WebSocket 需至少處理兩種訊息：
+  - `book`：全量 order book 快照
+  - `price_change`：價位增量更新，內含 `asset_id`、`price`、`size`、`side`、`best_bid`、`best_ask`
+- 本地需新增 `RealtimeOrderBookCache` 類型，對外提供：
+  - `ensure_assets(asset_ids)`：確保 token 已訂閱
+  - `get_cached_orderbook(token_id, max_age_seconds)`：同步讀取新鮮快取
+  - `get_orderbook(token_id, rest_fallback, max_wait_seconds)`：優先等候 WebSocket 快取，必要時 fallback REST
+  - `close()`：關閉 WebSocket、reader task、heartbeat task
+- order book 標準化輸出需維持既有 dict 契約：
+  - `bids: [{"price": "...", "size": "..."}]`
+  - `asks: [{"price": "...", "size": "..."}]`
+  - `_fetched_at: "<iso timestamp>"`
 - 需改用 `py-clob-client` 的 `get_order_book(token_id)` 公開方法
 - scanner / research / 執行層需對齊同一份 CLOB 深度語義：`bids` / `asks` / `price` / `size`
+- scanner / research / live 的 order book 讀取順序必須一致：
+  - 先讀 `RealtimeOrderBookCache`
+  - 只有在快取缺失或過期時才 fallback `py-clob-client.get_order_book(token_id)`
 - scanner 的 tradability 驗證必須同時驗證 `yes_token` 與 `no_token`：
   - `has_token_ids=true` 的前提是 YES / NO 兩邊 token 都存在
   - `book_available=true` 的前提是 YES / NO 兩邊 order book 都成功取得
@@ -135,6 +160,7 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - 第二段：在排序與 `filter_live_markets_for_analysis()` 後，才對剩餘市場補做雙邊 order book 驗證
 - `tradable_markets` 在第一段只代表「值得進一步檢查」；只有第二段 `tradability.book_available=true` 的市場才可進入 `_analyze_market()`
 - scanner 若已取得第二段雙邊 order book，需把標準化後的 `yes_orderbook` / `no_orderbook` 置於 `MarketTradability` 內供 research 重用；research 僅在快照缺失時才允許 fallback 重抓
+- `MarketTradability` 內的 `yes_orderbook` / `no_orderbook` 若已來自 WebSocket 新鮮快取，research 不得再無條件強制 REST 重抓
 - `UP_DOWN` 研究層需改用單邊有效成交成本模型：
   - 先根據選定方向的 ask 檔位估算固定 notional 的加權平均成交價
   - 再以該有效成交價相對最佳 ask 的偏離，作為 `spread_pct` / friction 門檻
@@ -194,6 +220,7 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
 - `prefiltered_rejects` 不得只進 `reject_summary`；同一批前置拒絕樣本也需依 `reject_samples` 上限寫入結果，供監控頁顯示具體樣本
 - 對來自 `/events` 補充來源的 `UP_DOWN` 市場，若 `parsed.expiry <= now`，應在 research 早期直接排除，不得進入 tradability 或 live 窗口過濾
 - 執行層對 `UP_DOWN` 候選正式送單前，需重新抓取選定方向對應 token 的最新 order book
+- 執行層 `_refresh_tail_side_quote()` 需先讀 `RealtimeOrderBookCache.get_cached_orderbook(token_id, max_age_seconds=...)`；只有快取不存在或過期時才允許 fallback `get_order_book(token_id)`
 - maker / taker 價格選擇需以最新 order book 為準，不得直接沿用 research candidate 內的歷史 `yes_bid / yes_ask / no_bid / no_ask`
 - 若送單前最新 quote 缺失、價格不合法或與研究時刻相比已失去可成交性，執行層需回傳結構化拒絕，不得送出舊價格訂單
 

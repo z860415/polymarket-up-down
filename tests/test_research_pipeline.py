@@ -40,6 +40,41 @@ def test_fetch_orderbook_uses_public_clob_client_and_normalizes_levels(
     mock_client.get_order_book.assert_called_once_with("token-123")
 
 
+def test_fetch_orderbook_prefers_realtime_cache(tmp_path) -> None:
+    """研究層若已有 WebSocket 快取，應優先使用而非重抓 REST。"""
+    signal_logger = SignalLogger(str(tmp_path / "research.db"))
+
+    class FakeOrderBookCache:
+        """測試用即時快取。"""
+
+        def __init__(self) -> None:
+            self.requested_tokens: list[str] = []
+
+        async def get_orderbook(self, token_id, rest_fallback=None, **kwargs):
+            self.requested_tokens.append(token_id)
+            return {
+                "bids": [{"price": "0.51", "size": "10"}],
+                "asks": [{"price": "0.53", "size": "20"}],
+                "_fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    fake_cache = FakeOrderBookCache()
+    pipeline = ResearchPipeline(
+        signal_logger=signal_logger,
+        orderbook_cache=fake_cache,  # type: ignore[arg-type]
+    )
+
+    mock_client = MagicMock()
+    pipeline._public_clob_client = mock_client
+
+    result = asyncio.run(pipeline._fetch_orderbook("token-cache"))
+
+    assert result is not None
+    assert result["bids"][0]["price"] == "0.51"
+    assert fake_cache.requested_tokens == ["token-cache"]
+    mock_client.get_order_book.assert_not_called()
+
+
 def test_should_include_market_allows_above_below_without_timeframe(tmp_path) -> None:
     """顯式允許 above_below 時，不應因 timeframe=None 被入口過濾掉。"""
     signal_logger = SignalLogger(str(tmp_path / "research.db"))

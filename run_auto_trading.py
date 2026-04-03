@@ -199,6 +199,7 @@ async def run() -> None:
 
     from polymarket_arbitrage.auto_trading import AutoTradingPipeline
     from polymarket_arbitrage.research_pipeline import ResearchPipeline
+    from polymarket_arbitrage.realtime_orderbook_cache import RealtimeOrderBookCache
     from polymarket_arbitrage.signal_logger import SignalLogger
 
     allowed_timeframes = parse_csv_list(args.timeframes)
@@ -206,6 +207,7 @@ async def run() -> None:
     allowed_assets = parse_csv_list(args.assets, uppercase=True)
 
     signal_logger = SignalLogger(db_path=args.db_path)
+    orderbook_cache = RealtimeOrderBookCache()
     research_pipeline = ResearchPipeline(
         signal_logger=signal_logger,
         min_edge_threshold=args.min_edge,
@@ -214,6 +216,7 @@ async def run() -> None:
         min_market_volume=args.min_volume,
         default_styles=allowed_styles,
         tail_mode=args.tail_mode,
+        orderbook_cache=orderbook_cache,
     )
 
     live_executor = None
@@ -237,6 +240,7 @@ async def run() -> None:
         live_executor = LiveExecutor(
             signal_logger=signal_logger,
             risk_config=risk_config,
+            orderbook_cache=orderbook_cache,
         )
         settlement_claimer = SettlementClaimer(db_path=args.db_path)
     elif should_enable_auto_claim:
@@ -314,6 +318,7 @@ async def run() -> None:
             result.claim_submitted_count,
         )
     finally:
+        await orderbook_cache.close()
         await research_pipeline.close()
 
 

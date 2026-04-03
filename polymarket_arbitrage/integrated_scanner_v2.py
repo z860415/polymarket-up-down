@@ -29,6 +29,7 @@ from .market_definition import (
     OracleFamily,
     TIMEFRAME_SECONDS,
 )
+from .realtime_orderbook_cache import RealtimeOrderBookCache
 from .signal_logger import SignalLogger, SignalObservation
 from .updown_tail_pricer import TAIL_WINDOWS
 
@@ -285,10 +286,15 @@ class PolymarketScannerV2:
         "1d": ["1 day", "1d", "daily", "24 hour", "24h"],
     }
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        orderbook_cache: Optional[RealtimeOrderBookCache] = None,
+    ):
         self.api_key = api_key or os.getenv("POLYMARKET_API_KEY")
         self.session: Optional[aiohttp.ClientSession] = None
         self._public_clob_client: Optional[ClobClient] = None
+        self.orderbook_cache = orderbook_cache
 
     async def __aenter__(self):
         self.session = aiohttp.ClientSession()
@@ -1053,6 +1059,17 @@ class PolymarketScannerV2:
 
     async def _fetch_orderbook(self, token_id: str) -> Optional[Dict[str, Any]]:
         """透過官方 SDK 抓取單一 token 的標準化訂單簿。"""
+        if self.orderbook_cache is not None:
+            cached_payload = await self.orderbook_cache.get_orderbook(
+                token_id,
+                rest_fallback=lambda: self._fetch_orderbook_rest(token_id),
+            )
+            if cached_payload is not None:
+                return cached_payload
+        return await self._fetch_orderbook_rest(token_id)
+
+    async def _fetch_orderbook_rest(self, token_id: str) -> Optional[Dict[str, Any]]:
+        """以官方 SDK 作為 WebSocket 缺失時的保守 fallback。"""
         try:
             payload = await asyncio.to_thread(
                 self._get_public_clob_client().get_order_book,

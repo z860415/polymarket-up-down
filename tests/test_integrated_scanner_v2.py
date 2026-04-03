@@ -288,6 +288,33 @@ def test_get_all_events_filters_expired_crypto_event_payloads_before_merge() -> 
     assert [event["markets"][0]["id"] for event in events] == ["m-live"]
 
 
+def test_fetch_orderbook_prefers_realtime_cache() -> None:
+    """scanner 第二段深度驗證應優先使用 WebSocket 快取。"""
+
+    class FakeOrderBookCache:
+        """測試用即時快取。"""
+
+        def __init__(self) -> None:
+            self.requested_tokens: list[str] = []
+
+        async def get_orderbook(self, token_id, rest_fallback=None, **kwargs):
+            self.requested_tokens.append(token_id)
+            return {
+                "bids": [{"price": "0.49", "size": "100"}],
+                "asks": [{"price": "0.51", "size": "200"}],
+                "_fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+    fake_cache = FakeOrderBookCache()
+    scanner = PolymarketScannerV2(api_key="test", orderbook_cache=fake_cache)  # type: ignore[arg-type]
+
+    result = asyncio.run(scanner._fetch_orderbook("token-cache"))
+
+    assert result is not None
+    assert result["asks"][0]["price"] == "0.51"
+    assert fake_cache.requested_tokens == ["token-cache"]
+
+
 def test_expand_markets_prefilters_up_down_style() -> None:
     """若只允許 up_down，discovery 階段只應展開 UP_DOWN 題型。"""
     scanner = PolymarketScannerV2(api_key="test")

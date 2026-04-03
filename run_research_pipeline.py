@@ -67,6 +67,7 @@ async def run() -> None:
     parser = build_argument_parser()
     args = parser.parse_args()
 
+    from polymarket_arbitrage.realtime_orderbook_cache import RealtimeOrderBookCache
     from polymarket_arbitrage.research_pipeline import ResearchPipeline
     from polymarket_arbitrage.signal_logger import SignalLogger
 
@@ -75,6 +76,7 @@ async def run() -> None:
     allowed_assets = parse_csv_list(args.assets, uppercase=True)
 
     signal_logger = SignalLogger(db_path=args.db_path)
+    orderbook_cache = RealtimeOrderBookCache()
     pipeline = ResearchPipeline(
         signal_logger=signal_logger,
         min_edge_threshold=args.min_edge,
@@ -84,6 +86,7 @@ async def run() -> None:
         default_styles=allowed_styles,
         anchor_source=args.anchor_source,
         tail_mode=args.tail_mode,
+        orderbook_cache=orderbook_cache,
     )
 
     try:
@@ -140,6 +143,7 @@ async def run() -> None:
             )
             print(f"JSON 匯出: {args.export_json}")
     finally:
+        await orderbook_cache.close()
         await pipeline.close()
 
 

@@ -792,6 +792,46 @@ def test_execute_tail_candidate_refreshes_orderbook_before_submit(mock_signal_lo
     assert kwargs["price_override"] == 0.21
 
 
+def test_refresh_tail_side_quote_prefers_realtime_cache(mock_signal_logger):
+    """送單前刷新 quote 時應優先讀取 WebSocket 快取。"""
+
+    class FakeOrderBookCache:
+        """測試用即時快取。"""
+
+        def __init__(self) -> None:
+            self.requested_tokens = []
+
+        def get_cached_orderbook(self, token_id, max_age_seconds=None):
+            self.requested_tokens.append((token_id, max_age_seconds))
+            return {
+                "bids": [{"price": "0.31", "size": "11"}],
+                "asks": [{"price": "0.34", "size": "12"}],
+            }
+
+    fake_cache = FakeOrderBookCache()
+    executor = LiveExecutor(
+        mock_signal_logger,
+        LiveRiskConfig(),
+        orderbook_cache=fake_cache,  # type: ignore[arg-type]
+    )
+    executor._clob_client = MagicMock()
+
+    candidate = Mock()
+    candidate.opportunity = Mock(
+        yes_token_id="yes-cache",
+        no_token_id="no-cache",
+        market_id="m-cache",
+    )
+    candidate.tail_estimate = Mock(selected_side="YES")
+
+    bid, ask = executor._refresh_tail_side_quote(candidate)
+
+    assert bid == 0.31
+    assert ask == 0.34
+    assert fake_cache.requested_tokens == [("yes-cache", 3.0)]
+    executor._clob_client.get_order_book.assert_not_called()
+
+
 @patch("polymarket_arbitrage.live_executor.ClobClient")
 def test_execute_trade_persists_runtime_state(
     mock_clob_class,

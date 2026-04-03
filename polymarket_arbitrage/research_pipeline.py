@@ -34,6 +34,7 @@ from .market_definition import (
     extract_oracle_config,
 )
 from .opening_anchor_store import OpeningAnchorStore
+from .realtime_orderbook_cache import RealtimeOrderBookCache
 from .reference_builder import ReferenceMethod, ReferencePrice, ReferenceStatus
 from .signal_logger import SignalLogger, SignalObservation
 from .updown_tail_pricer import (
@@ -171,6 +172,7 @@ class ResearchPipeline:
         tail_mode: str = "adaptive",
         effective_cost_notional_usdc: float = 1.0,
         market_data_cache_ttl_seconds: float = 10.0,
+        orderbook_cache: Optional[RealtimeOrderBookCache] = None,
     ) -> None:
         self.signal_logger = signal_logger
         self.min_edge_threshold = min_edge_threshold
@@ -182,12 +184,16 @@ class ResearchPipeline:
         self.default_styles = default_styles or ["up_down"]
         self.anchor_source = anchor_source
         self.tail_mode = tail_mode
-        self.scanner = PolymarketScannerV2(api_key)
+        self.scanner = PolymarketScannerV2(
+            api_key,
+            orderbook_cache=orderbook_cache,
+        )
         self.binance_client = BinanceClient()
         self.fair_model = FairProbabilityModel()
         self.anchor_store = OpeningAnchorStore(db_path=signal_logger.db_path)
         self.tail_pricer = UpDownTailPricer()
         self._public_clob_client: Optional[ClobClient] = None
+        self.orderbook_cache = orderbook_cache
         self._scanner_session_ready = False
         # 研究層行情快取，降低 observe 市場密集重複查詢的 HTTP 成本。
         self._spot_price_cache: Dict[str, Tuple[datetime, Optional[float]]] = {}
@@ -1119,6 +1125,17 @@ class ResearchPipeline:
 
     async def _fetch_orderbook(self, token_id: str) -> Optional[Dict[str, Any]]:
         """抓取單一 token 的訂單簿。"""
+        if self.orderbook_cache is not None:
+            cached_payload = await self.orderbook_cache.get_orderbook(
+                token_id,
+                rest_fallback=lambda: self._fetch_orderbook_rest(token_id),
+            )
+            if cached_payload is not None:
+                return cached_payload
+        return await self._fetch_orderbook_rest(token_id)
+
+    async def _fetch_orderbook_rest(self, token_id: str) -> Optional[Dict[str, Any]]:
+        """以官方 SDK 作為 WebSocket 缺失時的保守 fallback。"""
         try:
             payload = await asyncio.to_thread(
                 self._get_public_clob_client().get_order_book,
@@ -1144,21 +1161,23 @@ class ResearchPipeline:
         self, tradability: MarketTradability
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         """
-        始終獲取實時訂單簿數據，確保決策基於最新市場價格。
-        不重用舊數據，避免陳舊價格導致錯誤決策。
+        優先讀取 WebSocket 即時快取，必要時再 fallback REST。
         """
-        # 強制重新獲取實時訂單簿，不使用緩存
+        if (
+            tradability.yes_orderbook is not None
+            and tradability.no_orderbook is not None
+        ):
+            return tradability.yes_orderbook, tradability.no_orderbook
+
+        if self.orderbook_cache is not None:
+            await self.orderbook_cache.ensure_assets(
+                [tradability.yes_token, tradability.no_token]
+            )
+
         yes_book, no_book = await asyncio.gather(
             self._fetch_orderbook(tradability.yes_token),
             self._fetch_orderbook(tradability.no_token),
         )
-
-        # 記錄獲取時間戳，用於數據新鮮度驗證
-        now = datetime.now(timezone.utc).isoformat()
-        if yes_book:
-            yes_book["_fetched_at"] = now
-        if no_book:
-            no_book["_fetched_at"] = now
 
         return yes_book, no_book
 

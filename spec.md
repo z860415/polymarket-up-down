@@ -106,6 +106,25 @@
 職責：
 
 - 從 CLOB 抓取 best bid / ask / spread / midpoint / tick size / min order size
+- 即時深度主來源需升級為官方 Polymarket CLOB market WebSocket，不得再把 REST `get_order_book()` 視為唯一即時來源
+- 官方 market WebSocket 端點固定為 `wss://ws-subscriptions-clob.polymarket.com/ws/market`
+- 初始訂閱訊息需使用：
+  - `type: "market"`
+  - `assets_ids: [<token_id>, ...]`
+  - `custom_feature_enabled: true`
+- 已連線後若需新增資產訂閱，需使用官方動態訂閱訊息：
+  - `operation: "subscribe"`
+  - `assets_ids: [<token_id>, ...]`
+- market channel 需每 `10` 秒送出一次 `PING` heartbeat；若未持續 heartbeat，不得宣稱已接入穩定即時深度
+- 本地需維護 token 級別的 order book 快取，至少處理：
+  - `book`：以全量快照覆寫本地深度
+  - `price_change`：以價位增量更新本地深度
+- `price_change` 的 `side=BUY` 代表更新 bids，`side=SELL` 代表更新 asks；若 `size<=0` 則需移除對應價位
+- 本地 order book 快取需保存 `_fetched_at` / `timestamp`，供研究與執行層判斷新鮮度
+- 研究與執行主線的 order book 讀取契約需統一為：
+  - 優先讀取 WebSocket 快取中的新鮮深度
+  - 若快取不存在、尚未收到初始 `book`、或已超過 freshness TTL，再 fallback 到官方 SDK `get_order_book()`
+- freshness TTL 需保持短秒級，避免把幾十秒前的 book 誤當即時深度；v1 基線以 `<=3` 秒為上限
 - 研究層抓取 order book 時不得依賴已失效的 `/book/{token}` 舊路徑，需改用官方 SDK 公開方法或當前有效公開端點
 - tradability 的 token 契約必須是 YES / NO 雙邊完整驗證；只要任一邊 token 缺失，即視為 `missing_token_ids`，不得先算入 `clob_eligible`
 - tradability 的深度驗證不得只檢查 YES 邊；需以 YES / NO 雙邊 order book 同時可取得為準，避免不完整二元市場混入後續漏斗
@@ -217,6 +236,7 @@
 - 將 pending orders / directional exposure 持久化，確保重啟後可恢復
 - 對市場掃描、下單、訂單輪詢、claim 分類記錄錯誤與退避
 - `UP / DOWN` 候選在正式送單前必須重抓一次最新 order book，重新解析選定方向的 maker / taker 價格；若最新 best ask / bid 缺失，需在執行層本地拒絕，不得沿用研究時刻的舊 quote 直接送單
+- `UP / DOWN` 候選在正式送單前的「最新 order book」定義需優先改為 WebSocket 快取中的新鮮 snapshot，而非每次重新發送 REST 抓取
 - 送單層需保留最小滑價保護基線：若研究時刻 quote 與送單前最新 quote 偏離超過允許範圍，應以最新 quote 重算下單價格；若最新 quote 已不可成交，需直接拒絕
 - pending order 輪詢需支援超時治理：若訂單在 `order_timeout_seconds` 內仍未進入 `filled / cancelled / expired` 終態，執行層需主動取消，並釋放對應的 directional exposure，避免後續同資產同方向機會被永遠阻塞
 - live 主迴圈送出新單後，需在短延遲（約 `2` 秒）後立即做至少一次 `poll_order_status()`，避免新送出的 maker / taker 單一定要等到下一輪掃描才更新成交或取消狀態
@@ -248,7 +268,9 @@
 ### 4.3 研究層傳輸優化
 
 - `ResearchPipeline` 在同一個程序生命週期內需重用 scanner 的 `aiohttp.ClientSession`，不得每次 `run()` 都重新 `__aenter__ / __aexit__`
+- `ResearchPipeline` / `PolymarketScannerV2` / `LiveExecutor` 若共處同一程序，需共用單一 `RealtimeOrderBookCache` 實例，避免對同一 token 重複建立多條 market WebSocket 訂閱
 - CLI 入口在程序結束前需顯式呼叫研究層關閉方法，確保常駐 session 被正確釋放
+- CLI 入口在程序結束前也需顯式關閉 `RealtimeOrderBookCache`，確保 WebSocket reader task 與 heartbeat task 被正確釋放
 - 研究層對同一資產的 `spot_price` 與同一資產 / 視窗的 `volatility` 需提供短 TTL 快取，避免 `observe` 市場在同一輪或緊鄰輪次中重複發出等價 HTTP 查詢
 - 上述快取必須維持最小侵入：僅作讀取優化，不得改變原有 edge / risk / execute 的決策邏輯
 

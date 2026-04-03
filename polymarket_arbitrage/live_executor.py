@@ -39,6 +39,7 @@ from .proxy_account import (
     resolve_proxy_account_identity,
     same_address,
 )
+from .realtime_orderbook_cache import RealtimeOrderBookCache
 from .reference_builder import ReferencePrice
 from .fair_prob_model import FairProbEstimate
 from .signal_logger import SignalLogger, SignalObservation
@@ -238,6 +239,7 @@ class LiveExecutor:
         self,
         signal_logger: SignalLogger,
         risk_config: Optional[LiveRiskConfig] = None,
+        orderbook_cache: Optional[RealtimeOrderBookCache] = None,
     ):
         self.logger = signal_logger
         self.db_path = signal_logger.db_path
@@ -272,6 +274,8 @@ class LiveExecutor:
         self._funder_address = os.getenv("FUNDER_ADDRESS", "")
         self._tail_pricer = UpDownTailPricer()
         self._preflight_timeout = int(os.getenv("POLY_PREFLIGHT_TIMEOUT", "20"))
+        self._orderbook_cache = orderbook_cache
+        self._orderbook_cache_max_age_seconds = 3.0
 
         if self.db_path:
             self._init_runtime_state_tables()
@@ -699,8 +703,17 @@ class LiveExecutor:
             return 0.0, 0.0
 
         try:
-            client = self._get_clob_client()
-            payload = client.get_order_book(token_id)
+            payload = None
+            if self._orderbook_cache is not None:
+                payload = self._orderbook_cache.get_cached_orderbook(
+                    token_id,
+                    max_age_seconds=self._orderbook_cache_max_age_seconds,
+                )
+
+            if payload is None:
+                client = self._get_clob_client()
+                payload = client.get_order_book(token_id)
+
             bids = getattr(payload, "bids", None)
             asks = getattr(payload, "asks", None)
             if bids is None and isinstance(payload, dict):
