@@ -31,13 +31,13 @@ TAIL_SIGMA_WINDOWS = {
 }
 
 TAIL_WINDOWS = {
-    "1m": {"armed": 20, "attack": 8},
-    "5m": {"armed": 90, "attack": 35},
-    "15m": {"armed": 180, "attack": 75},
-    "1h": {"armed": 720, "attack": 240},
-    "4h": {"armed": 2400, "attack": 900},
-    "12h": {"armed": 4200, "attack": 1500},
-    "1d": {"armed": 5400, "attack": 1800},
+    "1m": {"armed": 15, "attack": 10},
+    "5m": {"armed": 60, "attack": 45},
+    "15m": {"armed": 120, "attack": 90},
+    "1h": {"armed": 600, "attack": 300},
+    "4h": {"armed": 1800, "attack": 1200},
+    "12h": {"armed": 3600, "attack": 1800},
+    "1d": {"armed": 4800, "attack": 2400},
 }
 
 MIN_NET_EDGE = {
