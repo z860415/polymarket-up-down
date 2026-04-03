@@ -1372,10 +1372,11 @@ class LiveExecutor:
             "[DEBUG] 檢查倉位 | exposure_key=%s | legacy_key=%s | existing=%s",
             exposure_key, legacy_key, list(self._directional_exposure_keys)
         )
-        if exposure_key in self._directional_exposure_keys or legacy_key in self._directional_exposure_keys:
-            return self._reject_tail_candidate(
-                candidate, f"同資產同方向已有倉位: {exposure_key} (或 {legacy_key})"
-            )
+        # 持倉限制已移除：允許同資產同方向多個倉位
+        # if exposure_key in self._directional_exposure_keys or legacy_key in self._directional_exposure_keys:
+        #     return self._reject_tail_candidate(
+        #         candidate, f"同資產同方向已有倉位: {exposure_key} (或 {legacy_key})"
+        #     )
 
         account = self.get_account_state()
         bucket_amount = account.usdc_balance * self._tail_pricer.position_bucket(
