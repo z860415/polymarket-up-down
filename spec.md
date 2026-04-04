@@ -240,6 +240,39 @@
 - 送單層需保留最小滑價保護基線：若研究時刻 quote 與送單前最新 quote 偏離超過允許範圍，應以最新 quote 重算下單價格；若最新 quote 已不可成交，需直接拒絕
 - pending order 輪詢需支援超時治理：若訂單在 `order_timeout_seconds` 內仍未進入 `filled / cancelled / expired` 終態，執行層需主動取消，並釋放對應的 directional exposure，避免後續同資產同方向機會被永遠阻塞
 - live 主迴圈送出新單後，需在短延遲（約 `2` 秒）後立即做至少一次 `poll_order_status()`，避免新送出的 maker / taker 單一定要等到下一輪掃描才更新成交或取消狀態
+- `5m / up_down` 主線需新增「入場後固定 ROI 止盈」：
+  - 只針對 BUY 已成交並成功建立的 managed position 生效
+  - v1 固定止盈門檻為浮盈 ROI `>= +100%`
+  - v1 先不新增 CLI 參數，門檻固定寫入 runtime state
+  - `observe / armed / attack` 的進場邏輯不變，止盈只影響入場後持倉管理
+- 成交後狀態機需由「pending order」延伸為「managed position」：
+  - BUY order `FILLED` 後，不得直接釋放同資產同方向 exposure
+  - 必須建立持久化 managed position，直到 SELL exit `FILLED` 才能釋放 exposure
+  - 若 entry order `CANCELLED / EXPIRED / timeout`，才可釋放 exposure
+- 止盈估值來源需收斂為「最新可成交賣價」：
+  - 優先使用 `RealtimeOrderBookCache` 中新鮮的 selected token `best_bid`
+  - 若快取缺失或過期，再 fallback `py-clob-client.get_order_book(token_id)`
+  - 若 `best_bid <= 0` 或 order book 不可用，該輪不得觸發止盈 SELL
+- 浮盈 ROI 公式固定為：
+  - `mark_value = shares * best_bid`
+  - `entry_cost = entry_price * shares + entry_fee_paid`
+  - `take_profit_roi = (mark_value - entry_cost) / entry_cost`
+  - 只有 `entry_cost > 0` 時才可計算
+- 止盈觸發後的出場行為：
+  - 以原 outcome token 建立 `SELL` 訂單
+  - 下單價格使用當輪最新 `best_bid`
+  - 下單股數以 entry fill 後持有的 `shares` 為準，不得用名義金額反推
+  - 若 exit order 送出成功，該 position 狀態改為 `exit_pending`
+  - 若 exit order `FILLED`，position 關閉並釋放 exposure
+  - 若 exit order `CANCELLED / EXPIRED / timeout`，position 回到 `open`，等待後續輪次重新評估
+- runtime state 需新增持久化資料：
+  - `live_managed_positions`：保存 open / exit_pending 倉位
+  - `live_pending_orders`：需額外保存 `order_intent`、`position_id`、`submitted_shares`
+  - 重啟恢復時需能從 SQLite 還原 pending orders 與 managed positions，不得因程序重啟遺失止盈管理
+- 可觀測性要求：
+  - lifecycle log 需能區分 `entry_filled -> managed_position_open`
+  - 止盈檢查需記錄 `position_id`、`best_bid`、`mark_value`、`roi`
+  - exit submit / filled / cancelled 需寫入結構化日誌
 
 預設執行規則：
 
@@ -361,6 +394,7 @@
 - v1 只支援 binary market 的 `indexSets=[1,2]` 領取策略
 - 必須提供 `claim dry run` 模式，只掃描可領取倉位、不提交 relayer 交易
 - 當 `.env` 同時存在 `RELAYER_API_KEY / RELAYER_API_KEY_ADDRESS` 與 Builder 憑證時，claim 提交必須優先使用 relayer API key header；只有 relayer API key 缺失時才允許退回 Builder 簽名標頭
+- `RELAYER_API_KEY_ADDRESS` 必須填入該 relayer key 綁定的 signer / key owner 地址，不得誤填 funder、proxy wallet 或 safe 地址；若 relayer 回 `invalid authorization`，需分別驗證 relayer key 與 Builder header，明確標記哪一路授權失效
 - 當領取地址等於 signer 推導出的 proxy wallet 時，必須改走官方 `PROXY` relayer 路徑，不得誤用 `SAFE`
 - 當領取地址等於 signer 推導出的 safe 或明確指定 `safe` 模式時，沿用既有 `SAFE` 路徑
 - 提交前必須驗證 `claim_account` 與 signer 推導出的 proxy / safe 地址是否一致，避免替錯帳戶領取

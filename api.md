@@ -55,6 +55,10 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - 先使用 `RELAYER_API_KEY` + `RELAYER_API_KEY_ADDRESS`
   - 若 relayer API key 缺失，才退回 `POLY_BUILDER_API_*`
   - 若兩者都缺失，preflight / submit 必須直接失敗
+- `RELAYER_API_KEY_ADDRESS`
+  - 必須是 relayer key 綁定的 signer / key owner 地址
+  - 不能填 `FUNDER_ADDRESS`、proxy wallet 或 safe 地址
+  - 若 `/submit` 回 `401 {"error":"invalid authorization"}`，需分開檢查 relayer API key header 與 Builder header，避免把兩組授權問題混在一起
 
 ### Live 訂單終態兼容
 
@@ -69,6 +73,81 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
 - 成交價格沿用 `price` 欄位；若手續費欄位缺失，可先記 `0`
 - 若 pending 訂單自 `created_at` 起超過 `order_timeout_seconds` 仍未進入終態，`poll_order_status()` 需主動呼叫取消流程，將本地狀態改為 `CANCELLED`，並釋放持久化的 pending / directional exposure
 - `AutoTradingPipeline.run_cycle()` 在 live 模式送出新單後，需於短延遲（預設約 `2` 秒）後立即再呼叫一次 `poll_order_status(order_id)`；若已有遠端終態或部分成交，應以最新輪詢結果覆蓋本輪 execution summary
+- `5m / up_down` v1 固定止盈基線：
+  - 僅對 BUY 已成交後建立的 managed position 生效
+  - 固定 `take_profit_roi = 1.0`
+  - v1 不提供 CLI / env 覆寫，先以內部常數實作
+- `poll_order_status()` 的 entry / exit 語義：
+  - `order_intent=entry`
+    - `FILLED`：建立 managed position，保留 directional exposure
+    - `CANCELLED / EXPIRED / timeout`：釋放 directional exposure
+  - `order_intent=exit`
+    - `FILLED`：關閉 managed position，釋放 directional exposure
+    - `CANCELLED / EXPIRED / timeout`：managed position 回到 `open`，directional exposure 保留
+
+### Managed Position 介面約束
+
+- `LiveExecutor` 需新增 `monitor_take_profit_positions() -> List[LiveExecutionResult]`
+  - 讀取所有 `status=open` 的 managed positions
+  - 用最新 `best_bid` 計算當前浮盈 ROI
+  - 若 `roi >= take_profit_roi`，提交 SELL exit 訂單
+  - 回傳本輪新建立的 exit executions
+- `LiveExecutor` 需新增 `get_managed_positions()` 供主迴圈與測試讀取目前受管持倉
+- `AutoTradingPipeline.run_cycle()` 在 live 模式下，完成 pending order 輪詢後，需先呼叫一次 `monitor_take_profit_positions()`，再進入 research 掃描
+
+### SQLite Runtime State 契約
+
+- `live_pending_orders` 需兼容以下欄位：
+  - `order_id TEXT PRIMARY KEY`
+  - `market_id TEXT NOT NULL`
+  - `observation_id TEXT NOT NULL`
+  - `asset TEXT NOT NULL`
+  - `token_id TEXT`
+  - `side TEXT NOT NULL`
+  - `size REAL NOT NULL`
+  - `price REAL NOT NULL`
+  - `status TEXT NOT NULL`
+  - `created_at TEXT NOT NULL`
+  - `filled_at TEXT`
+  - `exposure_key TEXT`
+  - `raw_response_json TEXT`
+  - `order_intent TEXT NOT NULL DEFAULT 'entry'`
+  - `position_id TEXT`
+  - `submitted_shares REAL NOT NULL DEFAULT 0`
+- `live_managed_positions` 需新增：
+  - `position_id TEXT PRIMARY KEY`
+  - `market_id TEXT NOT NULL`
+  - `observation_id TEXT NOT NULL`
+  - `asset TEXT NOT NULL`
+  - `side TEXT NOT NULL`
+  - `token_id TEXT NOT NULL`
+  - `shares REAL NOT NULL`
+  - `entry_price REAL NOT NULL`
+  - `entry_fee_paid REAL NOT NULL`
+  - `entry_cost REAL NOT NULL`
+  - `take_profit_roi REAL NOT NULL`
+  - `exposure_key TEXT NOT NULL`
+  - `status TEXT NOT NULL`
+  - `opened_at TEXT NOT NULL`
+  - `updated_at TEXT NOT NULL`
+  - `exit_order_id TEXT`
+  - `closed_at TEXT`
+- 舊資料庫若缺少上述新增欄位，`LiveExecutor._init_runtime_state_tables()` 需用 additive migration 補齊，不得要求人工重建 SQLite
+- `token_id` 必須落在 pending order runtime state 中，避免程序重啟後 entry order 成交時無法建立可賣出的 managed position
+
+### 止盈估值與 SELL 下單契約
+
+- 止盈估值來源：
+  - 先讀 `RealtimeOrderBookCache.get_cached_orderbook(token_id, max_age_seconds=3.0)`
+  - 若無新鮮快取，再 fallback `py-clob-client.get_order_book(token_id)`
+  - SELL 價格一律使用最新 `best_bid`
+- 浮盈 ROI：
+  - `mark_value = shares * best_bid`
+  - `roi = (mark_value - entry_cost) / entry_cost`
+- EXIT 訂單：
+  - `OrderArgs.side` 必須為 `SELL`
+  - `OrderArgs.size` 必須直接使用持有股數 `shares`
+  - `position_id` 需回寫到 pending order context，供後續 `poll_order_status()` 在 FILLED 後關閉對應持倉
 
 ### Live 最小成交額約束
 

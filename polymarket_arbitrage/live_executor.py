@@ -205,6 +205,29 @@ class LiveRuntimeRestoreResult:
 
 
 @dataclass
+class ManagedPosition:
+    """受控持倉狀態。"""
+
+    position_id: str
+    market_id: str
+    observation_id: str
+    asset: str
+    side: str
+    token_id: str
+    shares: float
+    entry_price: float
+    entry_fee_paid: float
+    entry_cost: float
+    take_profit_roi: float
+    exposure_key: str
+    status: str
+    opened_at: datetime
+    updated_at: datetime
+    exit_order_id: Optional[str] = None
+    closed_at: Optional[datetime] = None
+
+
+@dataclass
 class AccountState:
     """帳戶狀態快照"""
 
@@ -253,6 +276,8 @@ class LiveExecutor:
         # 執行狀態
         self._pending_orders: Dict[str, LiveExecutionResult] = {}
         self._pending_order_exposure_keys: Dict[str, str] = {}
+        self._pending_order_metadata: Dict[str, Dict[str, Any]] = {}
+        self._managed_positions: Dict[str, ManagedPosition] = {}
         self._directional_exposure_keys: set[str] = set()
         self._daily_stats = {
             "date": datetime.now(timezone.utc).date(),
@@ -280,6 +305,18 @@ class LiveExecutor:
         if self.db_path:
             self._init_runtime_state_tables()
 
+    def _ensure_sqlite_column(
+        self, cursor: sqlite3.Cursor, table_name: str, column_name: str, definition: str
+    ) -> None:
+        """以最小侵入方式補齊 SQLite 欄位。"""
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if column_name in existing_columns:
+            return
+        cursor.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"
+        )
+
     def _init_runtime_state_tables(self) -> None:
         """初始化正式版運行狀態資料表。"""
         conn = sqlite3.connect(self.db_path)
@@ -302,6 +339,30 @@ class LiveExecutor:
             )
             """
         )
+        self._ensure_sqlite_column(
+            cursor,
+            "live_pending_orders",
+            "order_intent",
+            "TEXT NOT NULL DEFAULT 'entry'",
+        )
+        self._ensure_sqlite_column(
+            cursor,
+            "live_pending_orders",
+            "position_id",
+            "TEXT",
+        )
+        self._ensure_sqlite_column(
+            cursor,
+            "live_pending_orders",
+            "submitted_shares",
+            "REAL NOT NULL DEFAULT 0",
+        )
+        self._ensure_sqlite_column(
+            cursor,
+            "live_pending_orders",
+            "token_id",
+            "TEXT",
+        )
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS live_directional_exposures (
@@ -320,6 +381,29 @@ class LiveExecutor:
             CREATE TABLE IF NOT EXISTS live_preflight_heartbeats (
                 check_name TEXT PRIMARY KEY,
                 checked_at TEXT NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS live_managed_positions (
+                position_id TEXT PRIMARY KEY,
+                market_id TEXT NOT NULL,
+                observation_id TEXT NOT NULL,
+                asset TEXT NOT NULL,
+                side TEXT NOT NULL,
+                token_id TEXT NOT NULL,
+                shares REAL NOT NULL,
+                entry_price REAL NOT NULL,
+                entry_fee_paid REAL NOT NULL,
+                entry_cost REAL NOT NULL,
+                take_profit_roi REAL NOT NULL,
+                exposure_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                opened_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                exit_order_id TEXT,
+                closed_at TEXT
             )
             """
         )
@@ -470,10 +554,26 @@ class LiveExecutor:
         )
 
     def _persist_pending_order(
-        self, result: LiveExecutionResult, *, asset: str, exposure_key: str
+        self,
+        result: LiveExecutionResult,
+        *,
+        asset: str,
+        token_id: str,
+        exposure_key: str,
+        submitted_shares: float,
+        order_intent: str = "entry",
+        position_id: Optional[str] = None,
     ) -> None:
         """將 pending order 落庫。"""
         self._pending_order_exposure_keys[result.order_id] = exposure_key
+        self._pending_order_metadata[result.order_id] = {
+            "asset": asset,
+            "token_id": token_id,
+            "exposure_key": exposure_key,
+            "order_intent": order_intent,
+            "position_id": position_id,
+            "submitted_shares": submitted_shares,
+        }
         if not self.db_path:
             return
         conn = sqlite3.connect(self.db_path)
@@ -481,8 +581,8 @@ class LiveExecutor:
         cursor.execute(
             """
             INSERT OR REPLACE INTO live_pending_orders (
-                order_id, market_id, observation_id, asset, side, size, price, status, created_at, filled_at, exposure_key, raw_response_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                order_id, market_id, observation_id, asset, side, size, price, status, created_at, filled_at, exposure_key, raw_response_json, order_intent, position_id, submitted_shares, token_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 result.order_id,
@@ -499,6 +599,10 @@ class LiveExecutor:
                 json.dumps(result.raw_response, ensure_ascii=False)
                 if result.raw_response is not None
                 else None,
+                order_intent,
+                position_id,
+                submitted_shares,
+                token_id,
             ),
         )
         conn.commit()
@@ -507,6 +611,7 @@ class LiveExecutor:
     def _delete_pending_order(self, order_id: str) -> None:
         """刪除已終態的 pending order。"""
         self._pending_order_exposure_keys.pop(order_id, None)
+        self._pending_order_metadata.pop(order_id, None)
         if not self.db_path:
             return
         conn = sqlite3.connect(self.db_path)
@@ -516,6 +621,88 @@ class LiveExecutor:
         )
         conn.commit()
         conn.close()
+
+    def _persist_managed_position(self, position: ManagedPosition) -> None:
+        """持久化 managed position。"""
+        self._managed_positions[position.position_id] = position
+        if not self.db_path:
+            return
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO live_managed_positions (
+                position_id, market_id, observation_id, asset, side, token_id, shares, entry_price, entry_fee_paid, entry_cost, take_profit_roi, exposure_key, status, opened_at, updated_at, exit_order_id, closed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                position.position_id,
+                position.market_id,
+                position.observation_id,
+                position.asset,
+                position.side,
+                position.token_id,
+                position.shares,
+                position.entry_price,
+                position.entry_fee_paid,
+                position.entry_cost,
+                position.take_profit_roi,
+                position.exposure_key,
+                position.status,
+                position.opened_at.isoformat(),
+                position.updated_at.isoformat(),
+                position.exit_order_id,
+                position.closed_at.isoformat() if position.closed_at else None,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def _delete_managed_position(self, position_id: str) -> None:
+        """刪除已關閉的 managed position。"""
+        self._managed_positions.pop(position_id, None)
+        if not self.db_path:
+            return
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM live_managed_positions WHERE position_id = ?",
+            (position_id,),
+        )
+        conn.commit()
+        conn.close()
+
+    def _mark_managed_position_exit_pending(
+        self, position_id: str, exit_order_id: str
+    ) -> None:
+        """標記持倉已進入 exit pending。"""
+        position = self._managed_positions.get(position_id)
+        if position is None:
+            return
+        position.status = "exit_pending"
+        position.exit_order_id = exit_order_id
+        position.updated_at = datetime.now(timezone.utc)
+        self._persist_managed_position(position)
+
+    def _mark_managed_position_open(self, position_id: str) -> None:
+        """將 exit 失敗或取消的持倉恢復為 open。"""
+        position = self._managed_positions.get(position_id)
+        if position is None:
+            return
+        position.status = "open"
+        position.exit_order_id = None
+        position.updated_at = datetime.now(timezone.utc)
+        self._persist_managed_position(position)
+
+    def _close_managed_position(self, position_id: str) -> None:
+        """關閉持倉並從 runtime state 移除。"""
+        position = self._managed_positions.get(position_id)
+        if position is None:
+            return
+        position.status = "closed"
+        position.closed_at = datetime.now(timezone.utc)
+        position.updated_at = position.closed_at
+        self._delete_managed_position(position_id)
 
     def _persist_directional_exposure(
         self,
@@ -569,6 +756,8 @@ class LiveExecutor:
     def restore_runtime_state(self) -> LiveRuntimeRestoreResult:
         """從 SQLite 與遠端帳戶狀態恢復 pending orders / directional exposure。"""
         restored_pending: Dict[str, LiveExecutionResult] = {}
+        restored_pending_metadata: Dict[str, Dict[str, Any]] = {}
+        restored_positions: Dict[str, ManagedPosition] = {}
         restored_exposures: set[str] = set()
 
         if self.db_path:
@@ -604,6 +793,41 @@ class LiveExecutor:
                         "exposure_key"
                     ]
                     restored_exposures.add(row["exposure_key"])
+                restored_pending_metadata[row["order_id"]] = {
+                    "asset": row["asset"],
+                    "token_id": row["token_id"],
+                    "exposure_key": row["exposure_key"],
+                    "order_intent": row["order_intent"],
+                    "position_id": row["position_id"],
+                    "submitted_shares": float(row["submitted_shares"] or 0.0),
+                }
+            cursor.execute(
+                "SELECT * FROM live_managed_positions ORDER BY opened_at ASC"
+            )
+            for row in cursor.fetchall():
+                position = ManagedPosition(
+                    position_id=row["position_id"],
+                    market_id=row["market_id"],
+                    observation_id=row["observation_id"],
+                    asset=row["asset"],
+                    side=row["side"],
+                    token_id=row["token_id"],
+                    shares=float(row["shares"]),
+                    entry_price=float(row["entry_price"]),
+                    entry_fee_paid=float(row["entry_fee_paid"]),
+                    entry_cost=float(row["entry_cost"]),
+                    take_profit_roi=float(row["take_profit_roi"]),
+                    exposure_key=row["exposure_key"],
+                    status=row["status"],
+                    opened_at=datetime.fromisoformat(row["opened_at"]),
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
+                    exit_order_id=row["exit_order_id"],
+                    closed_at=datetime.fromisoformat(row["closed_at"])
+                    if row["closed_at"]
+                    else None,
+                )
+                restored_positions[position.position_id] = position
+                restored_exposures.add(position.exposure_key)
             cursor.execute("SELECT exposure_key FROM live_directional_exposures")
             restored_exposures.update(
                 {row["exposure_key"] for row in cursor.fetchall()}
@@ -611,12 +835,15 @@ class LiveExecutor:
             conn.close()
 
         self._pending_orders = restored_pending
+        self._pending_order_metadata = restored_pending_metadata
+        self._managed_positions = restored_positions
         self._directional_exposure_keys = restored_exposures
 
         account = self.get_account_state()
         preflight_logger.info(
-            "runtime restore | pending=%s | exposures=%s | remote_open_orders=%s | remote_positions=%s",
+            "runtime restore | pending=%s | managed_positions=%s | exposures=%s | remote_open_orders=%s | remote_positions=%s",
             len(self._pending_orders),
+            len(self._managed_positions),
             len(self._directional_exposure_keys),
             len(account.open_orders),
             len(account.positions),
@@ -631,6 +858,10 @@ class LiveExecutor:
     def get_directional_exposure_keys(self) -> set[str]:
         """取得當前方向暴露鍵集合。"""
         return set(self._directional_exposure_keys)
+
+    def get_managed_positions(self) -> List[ManagedPosition]:
+        """取得目前受控持倉。"""
+        return list(self._managed_positions.values())
 
     def _get_clob_client(self) -> ClobClient:
         """獲取/初始化 CLOB 客戶端"""
@@ -1146,7 +1377,10 @@ class LiveExecutor:
                 fee_paid=0.0,
                 status=LiveExecutionStatus.FAILED,
                 created_at=datetime.now(timezone.utc),
-                error_message=f"Order too small: ${amount:.2f} (min $1.0)",
+                error_message=(
+                    f"Marketable BUY amount {amount:.2f} below exchange minimum "
+                    f"{self.risk.min_marketable_buy_notional:.2f}"
+                ),
             )
 
         # 向下取整到整數 shares
@@ -1259,7 +1493,12 @@ class LiveExecutor:
             self._pending_orders[order_id] = result
             exposure_key = f"{market_def.asset}:{side}"
             self._persist_pending_order(
-                result, asset=market_def.asset, exposure_key=exposure_key
+                result,
+                asset=market_def.asset,
+                token_id=token_id,
+                exposure_key=exposure_key,
+                submitted_shares=float(shares),
+                order_intent="entry",
             )
             self._persist_directional_exposure(
                 exposure_key=exposure_key,
@@ -1477,6 +1716,188 @@ class LiveExecutor:
             self._directional_exposure_keys.add(legacy_key)  # 同時添加無前綴格式
         return result
 
+    def _extract_filled_shares(
+        self, order_info: Dict[str, Any], fallback_submitted_shares: float
+    ) -> float:
+        """提取實際成交股數，缺失時退回本地下單股數。"""
+        raw_size_matched = order_info.get("size_matched", order_info.get("sizeMatched"))
+        if raw_size_matched not in (None, ""):
+            return float(raw_size_matched)
+
+        raw_size = order_info.get("size")
+        if raw_size not in (None, ""):
+            return float(raw_size)
+
+        return float(fallback_submitted_shares)
+
+    def _open_managed_position_from_fill(
+        self,
+        order_id: str,
+        result: LiveExecutionResult,
+        order_info: Dict[str, Any],
+        metadata: Dict[str, Any],
+    ) -> None:
+        """將 entry fill 轉成 managed position。"""
+        submitted_shares = float(metadata.get("submitted_shares") or 0.0)
+        filled_shares = self._extract_filled_shares(order_info, submitted_shares)
+        entry_price = result.avg_fill_price or result.price
+        entry_cost = filled_shares * entry_price + result.fee_paid
+        position = ManagedPosition(
+            position_id=order_id,
+            market_id=result.market_id,
+            observation_id=result.observation_id,
+            asset=str(metadata.get("asset") or ""),
+            side=result.side,
+            token_id=str(metadata.get("token_id") or ""),
+            shares=filled_shares,
+            entry_price=entry_price,
+            entry_fee_paid=result.fee_paid,
+            entry_cost=entry_cost,
+            take_profit_roi=1.0,
+            exposure_key=str(metadata.get("exposure_key") or ""),
+            status="open",
+            opened_at=result.filled_at or datetime.now(timezone.utc),
+            updated_at=result.filled_at or datetime.now(timezone.utc),
+        )
+        self._persist_managed_position(position)
+        if position.exposure_key:
+            self._directional_exposure_keys.add(position.exposure_key)
+            self._persist_directional_exposure(
+                exposure_key=position.exposure_key,
+                asset=position.asset,
+                side=position.side,
+                market_id=position.market_id,
+                order_id=order_id,
+                source_status="open_position",
+            )
+        lifecycle_logger.info(
+            "持倉建立 | position_id=%s | market=%s | asset=%s | side=%s | shares=%.4f | entry_cost=%.4f",
+            position.position_id,
+            position.market_id,
+            position.asset,
+            position.side,
+            position.shares,
+            position.entry_cost,
+        )
+
+    def _get_token_best_bid(self, token_id: str) -> float:
+        """取得 token 最新 best bid。"""
+        try:
+            payload = None
+            if self._orderbook_cache is not None:
+                payload = self._orderbook_cache.get_cached_orderbook(
+                    token_id,
+                    max_age_seconds=self._orderbook_cache_max_age_seconds,
+                )
+            if payload is None:
+                payload = self._get_clob_client().get_order_book(token_id)
+            bids = getattr(payload, "bids", None)
+            if bids is None and isinstance(payload, dict):
+                bids = payload.get("bids")
+            return self._extract_best_book_price(bids, is_bid=True)
+        except Exception as exc:
+            error_logger.error("止盈 best bid 讀取失敗 | token_id=%s | error=%s", token_id, exc)
+            return 0.0
+
+    def _submit_take_profit_exit(
+        self, position: ManagedPosition, best_bid: float
+    ) -> LiveExecutionResult:
+        """提交止盈 SELL 訂單。"""
+        try:
+            client = self._get_clob_client()
+            order_args = OrderArgs(
+                token_id=position.token_id,
+                price=best_bid,
+                size=float(position.shares),
+                side="SELL",
+            )
+            options = PartialCreateOrderOptions(
+                tick_size="0.01",
+                neg_risk=False,
+            )
+            order_resp = client.create_and_post_order(
+                order_args=order_args,
+                options=options,
+            )
+            order_id = order_resp.get("orderID", "")
+            result = LiveExecutionResult(
+                order_id=order_id,
+                market_id=position.market_id,
+                observation_id=position.observation_id,
+                side=position.side,
+                size=position.shares * best_bid,
+                price=best_bid,
+                filled_size=0.0,
+                avg_fill_price=0.0,
+                fee_paid=0.0,
+                status=LiveExecutionStatus.SUBMITTED,
+                created_at=datetime.now(timezone.utc),
+                raw_response=order_resp,
+            )
+            self._pending_orders[order_id] = result
+            self._persist_pending_order(
+                result,
+                asset=position.asset,
+                token_id=position.token_id,
+                exposure_key=position.exposure_key,
+                submitted_shares=position.shares,
+                order_intent="exit",
+                position_id=position.position_id,
+            )
+            self._mark_managed_position_exit_pending(position.position_id, order_id)
+            lifecycle_logger.info(
+                "止盈送單 | position_id=%s | exit_order_id=%s | best_bid=%.4f | shares=%.4f",
+                position.position_id,
+                order_id,
+                best_bid,
+                position.shares,
+            )
+            return result
+        except Exception as exc:
+            error_logger.error(
+                "止盈送單失敗 | position_id=%s | error=%s",
+                position.position_id,
+                exc,
+            )
+            return LiveExecutionResult(
+                order_id="",
+                market_id=position.market_id,
+                observation_id=position.observation_id,
+                side=position.side,
+                size=position.shares * best_bid,
+                price=best_bid,
+                filled_size=0.0,
+                avg_fill_price=0.0,
+                fee_paid=0.0,
+                status=LiveExecutionStatus.FAILED,
+                created_at=datetime.now(timezone.utc),
+                error_message=str(exc),
+            )
+
+    def monitor_take_profit_positions(self) -> List[LiveExecutionResult]:
+        """監控 open 持倉，達到固定 ROI 目標後提早賣出。"""
+        results: List[LiveExecutionResult] = []
+        for position in list(self._managed_positions.values()):
+            if position.status != "open":
+                continue
+            best_bid = self._get_token_best_bid(position.token_id)
+            if best_bid <= 0 or position.entry_cost <= 0:
+                continue
+            mark_value = position.shares * best_bid
+            roi = (mark_value - position.entry_cost) / position.entry_cost
+            lifecycle_logger.info(
+                "止盈檢查 | position_id=%s | best_bid=%.4f | mark_value=%.4f | roi=%.4f | target=%.4f",
+                position.position_id,
+                best_bid,
+                mark_value,
+                roi,
+                position.take_profit_roi,
+            )
+            if roi < position.take_profit_roi:
+                continue
+            results.append(self._submit_take_profit_exit(position, best_bid))
+        return results
+
     def _select_tail_order_price(
         self,
         candidate: "TradingCandidate",
@@ -1624,6 +2045,7 @@ class LiveExecutor:
         result = self._pending_orders.get(order_id)
         if result is None:
             return None
+        metadata = dict(self._pending_order_metadata.get(order_id, {}))
 
         result.status = status
         if error_message:
@@ -1632,10 +2054,15 @@ class LiveExecutor:
             result.filled_at = datetime.now(timezone.utc)
 
         del self._pending_orders[order_id]
-        exposure_key = self._pending_order_exposure_keys.get(order_id, "")
         self._delete_pending_order(order_id)
-        if exposure_key:
+        exposure_key = str(metadata.get("exposure_key") or "")
+        order_intent = str(metadata.get("order_intent") or "entry")
+        if order_intent == "entry" and exposure_key:
             self._delete_directional_exposure(exposure_key)
+        if order_intent == "exit":
+            position_id = metadata.get("position_id")
+            if position_id:
+                self._mark_managed_position_open(str(position_id))
         return result
 
     def poll_order_status(self, order_id: str) -> Optional[LiveExecutionResult]:
@@ -1648,6 +2075,7 @@ class LiveExecutor:
             order_info = client.get_order(order_id)
 
             result = self._pending_orders[order_id]
+            metadata = dict(self._pending_order_metadata.get(order_id, {}))
 
             # 解析狀態
             status_str = self._normalize_remote_order_status(order_info)
@@ -1661,6 +2089,24 @@ class LiveExecutor:
                 # 從 pending 移除
                 del self._pending_orders[order_id]
                 self._delete_pending_order(order_id)
+                order_intent = str(metadata.get("order_intent") or "entry")
+                if order_intent == "entry":
+                    self._open_managed_position_from_fill(
+                        order_id, result, order_info, metadata
+                    )
+                else:
+                    position_id = metadata.get("position_id")
+                    if position_id:
+                        self._close_managed_position(str(position_id))
+                    exposure_key = str(metadata.get("exposure_key") or "")
+                    if exposure_key:
+                        self._delete_directional_exposure(exposure_key)
+                    lifecycle_logger.info(
+                        "持倉關閉 | position_id=%s | exit_order_id=%s | market=%s",
+                        position_id,
+                        order_id,
+                        result.market_id,
+                    )
 
                 logger.info(
                     f"Order filled: {order_id}, size={result.filled_size:.2f}, avg_price={result.avg_fill_price:.4f}"
@@ -1697,7 +2143,6 @@ class LiveExecutor:
                     result.error_message = (
                         f"Order timeout exceeded {self.risk.order_timeout_seconds}s"
                     )
-                    lifecycle_logger = logging.getLogger("polymarket.lifecycle")
                     lifecycle_logger.info(
                         "訂單逾時取消 | order_id=%s | timeout_seconds=%s",
                         order_id,
@@ -1719,15 +2164,24 @@ class LiveExecutor:
         """取消訂單"""
         try:
             client = self._get_clob_client()
-            client.cancel(order_id)
+            if hasattr(client, "cancel_order"):
+                client.cancel_order(order_id)
+            else:
+                client.cancel(order_id)
 
+            metadata = dict(self._pending_order_metadata.get(order_id, {}))
             if order_id in self._pending_orders:
                 self._pending_orders[order_id].status = LiveExecutionStatus.CANCELLED
                 del self._pending_orders[order_id]
-            exposure_key = self._pending_order_exposure_keys.get(order_id, "")
             self._delete_pending_order(order_id)
-            if exposure_key:
+            exposure_key = str(metadata.get("exposure_key") or "")
+            order_intent = str(metadata.get("order_intent") or "entry")
+            if order_intent == "entry" and exposure_key:
                 self._delete_directional_exposure(exposure_key)
+            if order_intent == "exit":
+                position_id = metadata.get("position_id")
+                if position_id:
+                    self._mark_managed_position_open(str(position_id))
 
             return True
         except Exception as e:
