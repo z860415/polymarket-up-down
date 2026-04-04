@@ -140,19 +140,6 @@ class AutoTradingPipeline:
                             pending_result.order_id,
                             exc,
                         )
-            try:
-                take_profit_results = await asyncio.to_thread(
-                    self.live_executor.monitor_take_profit_positions,
-                )
-                for take_profit_result in take_profit_results:
-                    lifecycle_logger.info(
-                        "止盈監控 | order_id=%s | status=%s | side=%s",
-                        take_profit_result.order_id,
-                        take_profit_result.status.value,
-                        take_profit_result.side,
-                    )
-            except Exception as exc:
-                error_logger.error("止盈監控失敗 | error=%s", exc)
 
         scan_result = await self.research_pipeline.run(
             limit_events=limit_events,
@@ -269,6 +256,25 @@ class AutoTradingPipeline:
             claim_results=claim_results,
         )
 
+    async def _take_profit_monitor_loop(self, interval_seconds: int = 1) -> None:
+        """獨立循環：每秒檢查止盈條件。"""
+        while True:
+            try:
+                if self.live_executor is not None:
+                    take_profit_results = await asyncio.to_thread(
+                        self.live_executor.monitor_take_profit_positions,
+                    )
+                    for take_profit_result in take_profit_results:
+                        lifecycle_logger.info(
+                            "止盈監控 | order_id=%s | status=%s | side=%s",
+                            take_profit_result.order_id,
+                            take_profit_result.status.value,
+                            take_profit_result.side,
+                        )
+            except Exception as exc:
+                error_logger.error("止盈監控失敗 | error=%s", exc)
+            await asyncio.sleep(interval_seconds)
+
     async def run_forever(
         self,
         mode: str,
@@ -281,10 +287,17 @@ class AutoTradingPipeline:
         enable_auto_claim: bool = False,
         claim_interval_seconds: int = 300,
         claim_dry_run: bool = False,
+        take_profit_interval_seconds: int = 1,
     ) -> None:
         """持續輪詢市場並執行交易。"""
         last_claim_scan_at: Optional[datetime] = None
         consecutive_failures = 0
+
+        # 啟動獨立止盈監控任務（每秒檢查）
+        take_profit_task = asyncio.create_task(
+            self._take_profit_monitor_loop(take_profit_interval_seconds)
+        )
+
         while True:
             cycle_start = datetime.now(timezone.utc)
             should_run_auto_claim = False

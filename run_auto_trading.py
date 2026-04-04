@@ -89,6 +89,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--scan-interval", type=int, default=10, help="輪詢秒數")
     parser.add_argument(
+        "--take-profit-interval",
+        type=int,
+        default=1,
+        help="止盈檢查秒數（獨立於主掃描循環）",
+    )
+    parser.add_argument(
         "--log-dir",
         default=os.getenv("POLY_LOG_DIR", "logs"),
         help="正式版檔案日誌輸出目錄",
@@ -295,6 +301,7 @@ async def run() -> None:
                 enable_auto_claim=should_enable_auto_claim,
                 claim_interval_seconds=args.claim_interval,
                 claim_dry_run=args.claim_dry_run,
+                take_profit_interval_seconds=args.take_profit_interval,
             )
             lifecycle_logger.info("持續輪詢模式正常結束")
             return
