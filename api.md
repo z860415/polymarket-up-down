@@ -149,6 +149,26 @@ v1 正式主線為 `UP / DOWN` 尾盤錯價策略；`ABOVE / BELOW` 既有能力
   - `OrderArgs.size` 必須直接使用持有股數 `shares`
   - `position_id` 需回寫到 pending order context，供後續 `poll_order_status()` 在 FILLED 後關閉對應持倉
 
+### 進場最小金額 Fallback 契約
+
+- `LiveExecutor` 需統一提供「最小金額 fallback」能力，覆蓋：
+  - 一般 `should_execute()` 路徑
+  - `UP_DOWN` 的 `_execute_tail_candidate()` 路徑
+- 規則如下：
+  - 先算策略原始目標金額 `raw_amount`
+  - 若 `raw_amount < min_position_per_trade`，則將下單金額提升為 `min_position_per_trade`
+  - 若提升後仍低於 `5 shares * order_price`，則再提升至 `5 shares` 對應的最低金額
+  - 若提升後仍低於 `min_marketable_buy_notional` 且屬可立即成交 BUY，則再提升至 `min_marketable_buy_notional`
+  - 提升後再做 `check_risk_limits()` 與餘額/最大單筆檢查
+- `UP_DOWN` 的 `bucket_amount` 不能再作為「低於 min_position 就直接 reject」的硬門檻
+  - 它只能限制策略原始金額的上限
+  - 最終下單金額可因 fallback 被提升到 `min_position_per_trade`
+- 若 fallback 後的目標金額超過：
+  - `account.available_capital`
+  - `max_position_per_trade`
+  - 或其他硬風控限制
+  - 才可回傳拒絕
+
 ### Live 最小成交額約束
 
 - CLOB 對可立即成交的 `BUY` 單存在最小 notional 限制

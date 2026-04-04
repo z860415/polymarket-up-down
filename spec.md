@@ -273,6 +273,16 @@
   - lifecycle log 需能區分 `entry_filled -> managed_position_open`
   - 止盈檢查需記錄 `position_id`、`best_bid`、`mark_value`、`roi`
   - exit submit / filled / cancelled 需寫入結構化日誌
+- 進場倉位金額需新增統一 fallback 規則：
+  - 先計算策略原始目標金額，例如 Kelly 倉位、timeframe bucket、其他 sizing 規則
+  - 若策略原始金額低於 `min_position_per_trade`，不得直接拒絕
+  - 應先抬升至 `min_position_per_trade` 再繼續後續檢查
+  - 若抬升後仍低於交易所 `min_marketable_buy_notional` 或不足 `5 shares`，可再向上抬升到對應最低可下單金額
+  - 只有在抬升後仍超過可用資金、最大單筆上限或其他硬性風控時，才允許拒絕
+- 上述最小金額 fallback 不只作用於 `UP_DOWN` 尾盤主線，也需作用於既有非尾盤 `execute_trade()` / `should_execute()` 路徑
+- `UP_DOWN` 尾盤的 bucket 語義需調整：
+  - bucket 改為「建議策略金額上限」，而不是「低於最小金額就直接不下單」
+  - 若 `bucket_amount < min_position_per_trade`，但帳戶餘額與其餘風控允許，仍應以最小金額嘗試進場
 
 預設執行規則：
 
