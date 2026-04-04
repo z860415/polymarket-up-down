@@ -1674,6 +1674,8 @@ class LiveExecutor:
         )
         if order_price <= 0:
             return self._reject_tail_candidate(candidate, "找不到可用的尾盤下單價格")
+        if order_price < 0.10:
+            return self._reject_tail_candidate(candidate, f"入場價格過低: {order_price:.4f} < 0.10")
 
         raw_amount = amount
         amount = self._apply_minimum_entry_amount(amount, order_price)
