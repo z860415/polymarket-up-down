@@ -18,15 +18,18 @@ class FakeCandidate:
 
     opportunity: SimpleNamespace
     selected_window_state: str = "attack"
+    selected_execution_mode: str = "maker"
 
 
 class FakeResearchPipeline:
     """模擬研究主線。"""
 
-    def __init__(self, scan_result: ResearchScanResult) -> None:
+    def __init__(self, scan_result: ResearchScanResult, events: list[str] | None = None) -> None:
         self.scan_result = scan_result
+        self.events = events if events is not None else []
 
     async def run(self, **kwargs) -> ResearchScanResult:
+        self.events.append("research_run")
         return self.scan_result
 
 
@@ -37,13 +40,19 @@ class FakeLiveExecutor:
         self,
         execution_result: LiveExecutionResult,
         polled_result: LiveExecutionResult,
+        events: list[str] | None = None,
     ) -> None:
         self.execution_result = execution_result
         self.polled_result = polled_result
         self.executed_market_ids: list[str] = []
         self.polled_order_ids: list[str] = []
+        self.events = events if events is not None else []
 
     def get_pending_orders(self) -> list[LiveExecutionResult]:
+        return []
+
+    def monitor_take_profit_positions(self) -> list[LiveExecutionResult]:
+        self.events.append("monitor_take_profit_positions")
         return []
 
     def execute_candidate(self, candidate: FakeCandidate) -> LiveExecutionResult:
@@ -128,3 +137,62 @@ def test_run_cycle_polls_newly_submitted_order_once() -> None:
     assert live_executor.polled_order_ids == ["order-1"]
     assert result.executions[0].status == LiveExecutionStatus.FILLED
     assert result.executed_count == 1
+
+
+def test_run_cycle_monitors_take_profit_before_research() -> None:
+    """live 模式每輪應先做止盈監控，再進入 research 掃描。"""
+    events: list[str] = []
+    candidate = FakeCandidate(
+        opportunity=SimpleNamespace(
+            market_id="market-1",
+            asset="BTC",
+            selected_side="YES",
+            selected_edge=0.08,
+            timeframe="5m",
+        )
+    )
+    scan_result = ResearchScanResult(
+        scanned_event_count=1,
+        discovered_market_count=1,
+        parsed_market_count=1,
+        pricing_verified_count=1,
+        analyzed_market_count=1,
+        opportunity_count=1,
+        opportunities=[],
+        candidates=[candidate],
+        reject_summary={},
+        reject_samples=[],
+    )
+    execution = LiveExecutionResult(
+        order_id="order-1",
+        market_id="market-1",
+        observation_id="obs-1",
+        side="YES",
+        size=2.0,
+        price=0.52,
+        filled_size=0.0,
+        avg_fill_price=0.0,
+        fee_paid=0.0,
+        status=LiveExecutionStatus.FAILED,
+        created_at=datetime.now(timezone.utc),
+    )
+    live_executor = FakeLiveExecutor(execution, execution, events=events)
+    pipeline = AutoTradingPipeline(
+        research_pipeline=FakeResearchPipeline(scan_result, events=events),
+        live_executor=live_executor,
+        max_candidates_per_cycle=1,
+        post_submit_poll_delay_seconds=0.0,
+    )
+
+    asyncio.run(
+        pipeline.run_cycle(
+            mode="live",
+            limit_events=1,
+            allowed_timeframes=["5m"],
+            allowed_assets=["BTC"],
+            allowed_styles=["up_down"],
+            max_candidates=1,
+        )
+    )
+
+    assert events[:2] == ["monitor_take_profit_positions", "research_run"]

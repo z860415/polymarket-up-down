@@ -792,6 +792,135 @@ def test_execute_tail_candidate_refreshes_orderbook_before_submit(mock_signal_lo
     assert kwargs["price_override"] == 0.21
 
 
+def test_should_execute_uses_min_position_fallback_when_strategy_size_too_small(
+    sample_market_def, mock_account_state, mock_signal_logger
+):
+    """一般進場路徑若策略金額不足，應抬升到最小下單金額。"""
+    executor = LiveExecutor(
+        mock_signal_logger,
+        LiveRiskConfig(
+            min_edge_threshold=0.03,
+            min_confidence_score=0.3,
+            min_position_per_trade=1.0,
+            max_position_per_trade=100.0,
+        ),
+    )
+    executor.calculate_position_size = MagicMock(return_value=0.4)
+
+    should_exec, reason, params = executor.should_execute(
+        market_def=sample_market_def,
+        fair_prob=Mock(
+            p_yes=0.75,
+            p_no=0.25,
+            model_confidence_score=0.85,
+            time_to_expiry_sec=86400,
+        ),
+        yes_ask=0.10,
+        no_ask=0.0,
+        account=mock_account_state,
+    )
+
+    assert should_exec is True
+    assert reason is None
+    assert params is not None
+    assert params["size"] == 1.0
+
+
+def test_execute_tail_candidate_uses_min_position_when_bucket_too_small(mock_signal_logger):
+    """尾盤路徑若 bucket 不足最小金額，仍應以最小金額嘗試下單。"""
+    executor = LiveExecutor(mock_signal_logger, LiveRiskConfig(min_position_per_trade=1.0))
+    candidate = Mock()
+    candidate.market_definition = Mock(market_id="m-small", asset="BTC")
+    candidate.reference_price = Mock()
+    candidate.fair_probability = Mock(model_confidence_score=0.9)
+    candidate.observation = Mock(observation_id="obs-small")
+    candidate.opportunity = Mock(
+        market_id="m-small",
+        asset="BTC",
+        timeframe="5m",
+        confidence_score=0.9,
+        selected_side="YES",
+        yes_bid=0.10,
+        yes_ask=0.11,
+        no_bid=0.89,
+        no_ask=0.90,
+        yes_token_id="yes-small",
+        no_token_id="no-small",
+    )
+    candidate.runtime_snapshot = MarketRuntimeSnapshot(
+        market_id="m-small",
+        asset="BTC",
+        timeframe="5m",
+        anchor_price=65000.0,
+        spot_price=65200.0,
+        tau_seconds=30.0,
+        sigma_tail=0.5,
+        yes_bid=0.10,
+        yes_ask=0.11,
+        no_bid=0.89,
+        no_ask=0.90,
+        best_depth=600.0,
+        fees_enabled=True,
+        window_state="attack",
+    )
+    candidate.tail_estimate = TailStrategyEstimate(
+        p_up=0.90,
+        p_down=0.10,
+        lead_z=3.0,
+        gross_edge_up=0.76,
+        gross_edge_down=-0.78,
+        fee_cost=0.008,
+        slippage_cost_up=0.004,
+        slippage_cost_down=0.010,
+        slippage_cost=0.004,
+        fill_penalty=0.0,
+        net_edge_up=0.748,
+        net_edge_down=-0.792,
+        selected_side="YES",
+        selected_net_edge=0.20,
+        window_state="attack",
+        confidence_score=0.9,
+        selected_execution_mode="maker",
+    )
+
+    executor.get_account_state = MagicMock(
+        return_value=AccountState(
+            timestamp=datetime.now(timezone.utc),
+            wallet_address="0x123",
+            usdc_balance=30.0,
+            positions=[],
+            open_orders=[],
+            daily_pnl=0.0,
+            daily_trades=0,
+        )
+    )
+    executor.calculate_position_size = MagicMock(return_value=0.4)
+    executor.check_risk_limits = MagicMock(return_value=(True, "OK"))
+    executor._refresh_tail_side_quote = MagicMock(return_value=(0.10, 0.11))
+    executor.execute_trade = MagicMock(
+        return_value=LiveExecutionResult(
+            order_id="order-small",
+            market_id="m-small",
+            observation_id="obs-small",
+            side="YES",
+            size=1.0,
+            price=0.10,
+            filled_size=0.0,
+            avg_fill_price=0.0,
+            fee_paid=0.0,
+            status=LiveExecutionStatus.SUBMITTED,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    result = executor._execute_tail_candidate(candidate)
+
+    assert result.status == LiveExecutionStatus.SUBMITTED
+    executor.execute_trade.assert_called_once()
+    _, kwargs = executor.execute_trade.call_args
+    assert kwargs["size_override"] == 1.0
+
+
 def test_refresh_tail_side_quote_prefers_realtime_cache(mock_signal_logger):
     """送單前刷新 quote 時應優先讀取 WebSocket 快取。"""
 
@@ -1367,6 +1496,200 @@ def test_poll_order_status_cancels_order_after_timeout(mock_clob_class, risk_con
     assert "timeout" in (result.error_message or "").lower()
     mock_client.cancel_order.assert_called_once_with("test-order-timeout")
     assert "test-order-timeout" not in executor._pending_orders
+
+
+@patch.dict(os.environ, {
+    "POLYMARKET_API_KEY": "test-key",
+    "POLYMARKET_API_SECRET": "test-secret",
+    "WALLET_PRIVATE_KEY": TEST_PRIVATE_KEY,
+    "FUNDER_ADDRESS": TEST_PROXY_WALLET,
+}, clear=True)
+@patch("polymarket_arbitrage.live_executor.ClobClient")
+def test_poll_order_status_filled_creates_managed_position(mock_clob_class, risk_config, mock_signal_logger):
+    """BUY 成交後應建立 managed position，且保留同方向 exposure。"""
+    mock_client = MagicMock()
+    mock_clob_class.return_value = mock_client
+    mock_client.get_balance_allowance.return_value = {"balance": "1000000000"}
+    mock_client.get_positions.return_value = []
+    mock_client.get_open_orders.return_value = []
+    mock_client.create_and_post_order.return_value = {"orderID": "entry-order-1"}
+
+    executor = LiveExecutor(mock_signal_logger, risk_config)
+
+    result = executor.execute_trade(
+        market_def=Mock(market_id="test-market", asset="BTC"),
+        ref_price=Mock(),
+        fair_prob=Mock(),
+        observation=Mock(observation_id="test-obs"),
+        yes_token_id="yes-123",
+        no_token_id="no-456",
+        yes_ask=0.50,
+        no_ask=0.60,
+        execution_side_override="YES",
+        price_override=0.50,
+        size_override=10.0,
+        edge_override=0.10,
+        skip_decision_gate=True,
+    )
+    assert result.status == LiveExecutionStatus.SUBMITTED
+
+    mock_client.get_order.return_value = {
+        "status": "FILLED",
+        "size_matched": "20",
+        "price": "0.50",
+        "fee": "0",
+    }
+
+    filled = executor.poll_order_status("entry-order-1")
+
+    assert filled is not None
+    assert filled.status == LiveExecutionStatus.FILLED
+    managed_positions = executor.get_managed_positions()
+    assert len(managed_positions) == 1
+    position = managed_positions[0]
+    assert position.position_id == "entry-order-1"
+    assert position.asset == "BTC"
+    assert position.side == "YES"
+    assert position.token_id == "yes-123"
+    assert position.shares == 20.0
+    assert position.entry_cost == 10.0
+    assert position.status == "open"
+    assert "BTC:YES" in executor.get_directional_exposure_keys()
+
+
+@patch.dict(os.environ, {
+    "POLYMARKET_API_KEY": "test-key",
+    "POLYMARKET_API_SECRET": "test-secret",
+    "WALLET_PRIVATE_KEY": TEST_PRIVATE_KEY,
+    "FUNDER_ADDRESS": TEST_PROXY_WALLET,
+}, clear=True)
+@patch("polymarket_arbitrage.live_executor.ClobClient")
+def test_monitor_take_profit_positions_submits_sell_exit(mock_clob_class, risk_config, mock_signal_logger):
+    """持倉浮盈達到固定 ROI 目標後，應提交 SELL exit 訂單。"""
+    mock_client = MagicMock()
+    mock_clob_class.return_value = mock_client
+    mock_client.get_balance_allowance.return_value = {"balance": "1000000000"}
+    mock_client.get_positions.return_value = []
+    mock_client.get_open_orders.return_value = []
+    mock_client.create_and_post_order.side_effect = [
+        {"orderID": "entry-order-1"},
+        {"orderID": "exit-order-1"},
+    ]
+    mock_client.get_order.return_value = {
+        "status": "FILLED",
+        "size_matched": "20",
+        "price": "0.50",
+        "fee": "0",
+    }
+    orderbook_cache = MagicMock()
+    orderbook_cache.get_cached_orderbook.return_value = {
+        "bids": [{"price": "1.00", "size": "20"}],
+        "asks": [{"price": "1.01", "size": "20"}],
+    }
+
+    executor = LiveExecutor(
+        mock_signal_logger,
+        risk_config,
+        orderbook_cache=orderbook_cache,
+    )
+    executor.execute_trade(
+        market_def=Mock(market_id="test-market", asset="BTC"),
+        ref_price=Mock(),
+        fair_prob=Mock(),
+        observation=Mock(observation_id="test-obs"),
+        yes_token_id="yes-123",
+        no_token_id="no-456",
+        yes_ask=0.50,
+        no_ask=0.60,
+        execution_side_override="YES",
+        price_override=0.50,
+        size_override=10.0,
+        edge_override=0.10,
+        skip_decision_gate=True,
+    )
+    executor.poll_order_status("entry-order-1")
+
+    exit_results = executor.monitor_take_profit_positions()
+
+    assert len(exit_results) == 1
+    assert exit_results[0].order_id == "exit-order-1"
+    assert exit_results[0].status == LiveExecutionStatus.SUBMITTED
+    order_args = mock_client.create_and_post_order.call_args_list[1].kwargs["order_args"]
+    assert order_args.side == "SELL"
+    assert float(order_args.size) == 20.0
+    assert float(order_args.price) == 1.0
+    managed_positions = executor.get_managed_positions()
+    assert len(managed_positions) == 1
+    assert managed_positions[0].status == "exit_pending"
+    assert managed_positions[0].exit_order_id == "exit-order-1"
+
+
+@patch.dict(os.environ, {
+    "POLYMARKET_API_KEY": "test-key",
+    "POLYMARKET_API_SECRET": "test-secret",
+    "WALLET_PRIVATE_KEY": TEST_PRIVATE_KEY,
+    "FUNDER_ADDRESS": TEST_PROXY_WALLET,
+}, clear=True)
+@patch("polymarket_arbitrage.live_executor.ClobClient")
+def test_poll_order_status_filled_exit_closes_managed_position(mock_clob_class, risk_config, mock_signal_logger):
+    """SELL exit 成交後應關閉 managed position 並釋放 exposure。"""
+    mock_client = MagicMock()
+    mock_clob_class.return_value = mock_client
+    mock_client.get_balance_allowance.return_value = {"balance": "1000000000"}
+    mock_client.get_positions.return_value = []
+    mock_client.get_open_orders.return_value = []
+    mock_client.create_and_post_order.side_effect = [
+        {"orderID": "entry-order-1"},
+        {"orderID": "exit-order-1"},
+    ]
+    orderbook_cache = MagicMock()
+    orderbook_cache.get_cached_orderbook.return_value = {
+        "bids": [{"price": "1.00", "size": "20"}],
+        "asks": [{"price": "1.01", "size": "20"}],
+    }
+
+    executor = LiveExecutor(
+        mock_signal_logger,
+        risk_config,
+        orderbook_cache=orderbook_cache,
+    )
+    executor.execute_trade(
+        market_def=Mock(market_id="test-market", asset="BTC"),
+        ref_price=Mock(),
+        fair_prob=Mock(),
+        observation=Mock(observation_id="test-obs"),
+        yes_token_id="yes-123",
+        no_token_id="no-456",
+        yes_ask=0.50,
+        no_ask=0.60,
+        execution_side_override="YES",
+        price_override=0.50,
+        size_override=10.0,
+        edge_override=0.10,
+        skip_decision_gate=True,
+    )
+
+    mock_client.get_order.return_value = {
+        "status": "FILLED",
+        "size_matched": "20",
+        "price": "0.50",
+        "fee": "0",
+    }
+    executor.poll_order_status("entry-order-1")
+    executor.monitor_take_profit_positions()
+
+    mock_client.get_order.return_value = {
+        "status": "FILLED",
+        "size_matched": "20",
+        "price": "1.00",
+        "fee": "0",
+    }
+    exit_filled = executor.poll_order_status("exit-order-1")
+
+    assert exit_filled is not None
+    assert exit_filled.status == LiveExecutionStatus.FILLED
+    assert executor.get_managed_positions() == []
+    assert "BTC:YES" not in executor.get_directional_exposure_keys()
 
 
 @patch.dict(os.environ, {

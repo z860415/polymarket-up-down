@@ -140,6 +140,19 @@ class AutoTradingPipeline:
                             pending_result.order_id,
                             exc,
                         )
+            try:
+                take_profit_results = await asyncio.to_thread(
+                    self.live_executor.monitor_take_profit_positions,
+                )
+                for take_profit_result in take_profit_results:
+                    lifecycle_logger.info(
+                        "止盈監控 | order_id=%s | status=%s | side=%s",
+                        take_profit_result.order_id,
+                        take_profit_result.status.value,
+                        take_profit_result.side,
+                    )
+            except Exception as exc:
+                error_logger.error("止盈監控失敗 | error=%s", exc)
 
         scan_result = await self.research_pipeline.run(
             limit_events=limit_events,

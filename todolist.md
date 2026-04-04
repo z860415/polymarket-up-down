@@ -8,6 +8,16 @@
 
 ## 已完成
 
+- [x] T134 本輪：將進場倉位邏輯改為「策略金額不足時退回最小下單金額」，同時覆蓋尾盤與非尾盤路徑
+- [x] T134.1 本輪：更新 `spec.md` / `api.md`，定義最小金額 fallback 契約
+- [x] T134.2 本輪：補齊非尾盤與尾盤小資金場景測試，驗證不足門檻時改用最小金額而非直接拒絕
+- [x] T134.3 本輪：重構 `live_executor` 倉位計算與尾盤 bucket 主線，統一最小金額 fallback
+- [x] T133 本輪：規劃並實作 5m 入場後持倉止盈機制，補齊持倉監控、提早賣出主線與回測/驗證口徑
+- [x] T133.1 本輪：更新 `spec.md` / `api.md`，定義固定 ROI `+100%` 全平倉止盈契約與 runtime state schema
+- [x] T133.2 本輪：在 `live_executor` 新增 managed positions 持久化，串起 BUY 成交後建持倉
+- [x] T133.3 本輪：在 live cycle 新增止盈監控，達標後提交 SELL 並在成交後關閉持倉
+- [x] T133.4 本輪：補齊 `live_executor` / `auto_trading` 測試並重跑 targeted pytest
+- [x] T132 本輪：輪替 Relayer API key 為新建憑證並重跑自動領取授權診斷，確認舊 key owner 地址填成 funder/proxy 導致 relayer `401`，更新後正式 claim 可提交；Builder 憑證仍為 `invalid authorization`
 - [x] T131 本輪：接入 Polymarket 官方 CLOB market WebSocket 即時深度快取，將 scanner / research / live 的 order book 來源改為「WS 快取優先、REST fallback」，修正監控後沿用舊深度導致價差過寬與長期無交易
 - [x] T130 本輪：在 discovery 階段硬性剔除 Gamma 回傳的已過期市場，避免 `active=true` 的陳舊 crypto `up_down` 樣本佔用研究配額並導致當日資料庫無記錄
 - [x] T129 本輪：將 `UP_DOWN` 尾盤策略改為 research / execute 對齊的 maker 正確版，補上 maker edge、官方 taker fee 公式與執行模式契約
